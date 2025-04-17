@@ -1,7 +1,7 @@
 {
-  "name": "caprover-one-click-apps",
+  "name": "awana-caprover-one-click-apps",
   "version": "1.0.0",
-  "description": "One Click App Repository for CapRover",
+  "description": "One Click App Repository for CapRover by Awana",
   "scripts": {
     "formatter": "prettier --check \"./public/**/*.(json|yml)\"",
     "formatter-write": "prettier --write \"./public/**/*.(json|yml)\"",
@@ -11,14 +11,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/caprover/one-click-apps.git"
+    "url": "git+https://github.com/digidem/caprover-one-click-apps.git"
   },
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/caprover/one-click-apps/issues"
+    "url": "https://github.com/digidem/caprover-one-click-apps/issues"
   },
-  "homepage": "https://github.com/caprover/one-click-apps",
+  "homepage": "https://github.com/digidem/caprover-one-click-apps",
   "dependencies": {
     "fs-extra": "^9.0.1",
     "gh-pages": "^3.1.0",

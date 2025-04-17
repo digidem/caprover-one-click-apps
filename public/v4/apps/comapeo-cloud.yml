@@ -1,0 +1,47 @@
+captainVersion: 4
+
+services:
+    $$cap_appname:
+        image: $$cap_comapeocloud_docker_image
+        expose:
+            - 8000
+        restart: unless-stopped
+        volumes:
+            - $$cap_appname-data:/usr/src/app
+        environment:
+            SERVER_BEARER_TOKEN: $$cap_server_bearer_token
+            SERVER_NAME: $$cap_server_name
+            ALLOWED_PROJECTS: $$cap_allowed_projects
+            STORAGE_DIR: /usr/src/app
+        caproverExtra:
+            containerHttpPort: 8080
+
+caproverOneClickApp:
+    instructions:
+        start: |-
+            A self-hosted archive server for CoMapeo.
+        end: |-
+            CoMapeo Archive Server is deploying and will be available within a minute.
+    displayName: CoMapeo Archive Server
+    isOfficial: false # Only if all images used here are official or from a trusted source.
+    description: A self-hosted archive server for CoMapeo.
+    documentation: https://github.com/digidem/comapeo-cloud
+    variables:
+        - id: '$$cap_comapeocloud_docker_image'
+          label: CoMapeo Archive Server Docker Image
+          defaultValue: 'communityfirst/comapeo-cloud:latest'
+          validRegex: /^communityfirst/comapeo-cloud:[0-9a-z_-]+$/
+          description: Check out the container registry for valid tags
+
+        - id: '$$cap_server_bearer_token'
+          label: Token for authenticating API requests.
+          description: Should be large random string
+          defaultValue: '$$cap_gen_random_hex(100)'
+
+        - id: '$$cap_server_name'
+          label: Friendly server name, seen by CoMapeo users when adding an archive server
+          defaultValue: 'CoMapeo Archive Server'
+
+        - id: '$$cap_allowed_projects'
+          label: Number of projects allowed to register with the server
+          defaultValue: '1'
