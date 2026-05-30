@@ -7,12 +7,12 @@ services:
             - 8000
         restart: unless-stopped
         volumes:
-            - $$cap_appname-data:/usr/src/app
+            - $$cap_appname-data:/data
         environment:
             SERVER_BEARER_TOKEN: $$cap_server_bearer_token
             SERVER_NAME: $$cap_server_name
             ALLOWED_PROJECTS: $$cap_allowed_projects
-            STORAGE_DIR: /usr/src/app
+            STORAGE_DIR: /data
         caproverExtra:
             containerHttpPort: 8080
 
