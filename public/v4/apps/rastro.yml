@@ -110,7 +110,7 @@ caproverOneClickApp:
             2. No app "$$cap_appname": ative HTTPS e "Force HTTPS". A API recusa acesso sem HTTPS e o visualizador não envia credenciais em HTTP.
             3. No gateway (Raspberry Pi da base): host $$cap_appname-mqtt.$$cap_root_domain (ou o seu domínio extra), porta 8883, usuário gateway, a senha MQTT do "gateway" (anote a que foi gerada nas variáveis do app $$cap_appname-broker: RASTRO_MQTT_PASSWORD_GATEWAY) e o mesmo prefixo de tópico. A CA do broker baixe em https://$$cap_appname.$$cap_root_domain/ca.crt (depois de ativar o HTTPS).
             4. Guarde o token da API (variável RASTRO_API_TOKEN do app $$cap_appname-api): é ele que libera o mapa.
-            5. Basemap: copie o arquivo .pmtiles (e a pasta glyphs/) para o volume "$$cap_appname-tiles" pelo shell do servidor (docker cp ou o caminho do volume).
+            5. Basemap: já vem pronto (OpenStreetMap servido pela API do próprio Rastro, com token; o navegador não fala com o OSM). Opcional: para um basemap offline próprio, copie basemap.pmtiles para o volume "$$cap_appname-tiles". Para desligar o OSM, defina RASTRO_OSM_TILES=0 no app "$$cap_appname-api".
             6. Retenção e backup não rodam aqui: agende rastro_retention.py e rastro_backup.sh (cron do servidor ou Windmill) com os papéis <banco>_maint e <banco>_backup.
     variables:
         - id: $$cap_pg_admin_url
@@ -143,7 +143,7 @@ caproverOneClickApp:
 
         - id: $$cap_tag
           label: Versão (tag das imagens Docker Hub communityfirst/rastro-*)
-          defaultValue: '0.3.0'
+          defaultValue: '0.4.0'
           validRegex: /^[\w.-]{1,64}$/
           description: A mesma tag (versão publicada) vale para as imagens broker, ingest, api, web e pgtools.
 
