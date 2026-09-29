@@ -105,7 +105,7 @@ caproverOneClickApp:
         - id: $$cap_title
           label: Título do mapa
           defaultValue: 'Rastro'
-          validRegex: /^[\w À-ÿ.()-]{1,30}$/
+          validRegex: /^[\wÀ-ÿ(][\w À-ÿ.()-]{0,29}$/
 
         - id: $$cap_topic_prefix
           label: Prefixo dos tópicos MQTT
