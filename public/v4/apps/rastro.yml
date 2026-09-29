@@ -1,0 +1,172 @@
+captainVersion: 4
+
+services:
+    $$cap_appname-broker:
+        image: ghcr.io/digidem/rastro-broker:$$cap_tag
+        restart: unless-stopped
+        ports:
+            - '8883:8883'
+        volumes:
+            - $$cap_appname-broker-data:/mosquitto/data
+        environment:
+            RASTRO_MQTT_TOPIC_PREFIX: $$cap_topic_prefix
+            RASTRO_MQTT_PASSWORD_GATEWAY: $$cap_mqtt_pw_gateway
+            RASTRO_MQTT_PASSWORD_INGEST: $$cap_mqtt_pw_ingest
+            RASTRO_TLS_CA_B64: $$cap_tls_ca_b64
+            RASTRO_TLS_SERVER_CRT_B64: $$cap_tls_crt_b64
+            RASTRO_TLS_SERVER_KEY_B64: $$cap_tls_key_b64
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname-ingest:
+        image: ghcr.io/digidem/rastro-ingest:$$cap_tag
+        restart: unless-stopped
+        depends_on:
+            - $$cap_appname-broker
+        environment:
+            RASTRO_MQTT_HOST: srv-captain--$$cap_appname-broker
+            RASTRO_MQTT_PORT: '8883'
+            RASTRO_MQTT_USERNAME: ingest
+            RASTRO_MQTT_PASSWORD: $$cap_mqtt_pw_ingest
+            RASTRO_MQTT_CA_B64: $$cap_tls_ca_b64
+            RASTRO_MQTT_CLIENT_ID: $$cap_appname-ingest-1
+            RASTRO_MQTT_TOPIC_PREFIX: $$cap_topic_prefix
+            RASTRO_PG_HOST: $$cap_pg_host
+            RASTRO_PG_PORT: $$cap_pg_port
+            RASTRO_PG_DB: $$cap_pg_database
+            RASTRO_PG_USER: $$cap_pg_user_ingest
+            RASTRO_PG_PASSWORD: $$cap_pg_pw_ingest
+            RASTRO_LOG_LEVEL: INFO
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname-api:
+        image: ghcr.io/digidem/rastro-api:$$cap_tag
+        restart: unless-stopped
+        environment:
+            RASTRO_API_AUTH: token
+            RASTRO_API_TOKEN: $$cap_api_token
+            RASTRO_API_HOSTS_LOCAIS: ''
+            RASTRO_REQUIRE_HTTPS: '1'
+            RASTRO_PG_HOST: $$cap_pg_host
+            RASTRO_PG_PORT: $$cap_pg_port
+            RASTRO_PG_DB: $$cap_pg_database
+            RASTRO_PG_USER: $$cap_pg_user_viewer
+            RASTRO_PG_PASSWORD: $$cap_pg_pw_viewer
+            RASTRO_LOG_LEVEL: INFO
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname:
+        image: ghcr.io/digidem/rastro-web:$$cap_tag
+        restart: unless-stopped
+        depends_on:
+            - $$cap_appname-api
+        volumes:
+            - $$cap_appname-tiles:/srv/tiles
+        environment:
+            RASTRO_API_UPSTREAM: srv-captain--$$cap_appname-api:8080
+            RASTRO_TITLE: $$cap_title
+        caproverExtra:
+            containerHttpPort: '80'
+
+caproverOneClickApp:
+    displayName: Rastro
+    isOfficial: false
+    description: Rastreamento de rádios Meshtastic em mapa próprio — broker MQTT com TLS, ingestão para PostgreSQL, API e visualizador.
+    documentation: https://github.com/digidem/rastro
+    instructions:
+        start: |-
+            Rastro recebe posições de rádios Meshtastic (via um gateway USB na base), guarda num PostgreSQL que você já tem e mostra num mapa próprio. Nada vai para servidores públicos.
+
+            ANTES de continuar:
+            1. Escolha o NOME DO APP agora — o certificado do broker depende dele.
+            2. No PostgreSQL existente, rode `deploy/postgres/bootstrap-existing.sh` do repositório rastro (cria banco, schema e os papéis <banco>_ingest e <banco>_viewer). Use as mesmas senhas nos campos abaixo.
+            3. Gere os certificados do broker com o nome do app e o domínio público do MQTT:
+               scripts/rastro_gen_certs.sh --cert-dir ~/rastro-certs --san DNS:<mqtt.seu-dominio> --san DNS:srv-captain--<nome-do-app>-broker --san DNS:<nome-do-app>-broker --b64
+               e cole os valores *_B64 nos campos abaixo (a chave privada do servidor NÃO deve ficar em chat nem em histórico).
+            4. No firewall do servidor, libere só a porta 8883/TCP (MQTT com TLS).
+        end: |-
+            Rastro está subindo.
+
+            AGORA, antes de abrir o mapa:
+            1. No app "$$cap_appname": ative HTTPS e "Force HTTPS". A API recusa acesso sem HTTPS e o visualizador não envia credenciais em HTTP.
+            2. Basemap: copie o arquivo .pmtiles (e a pasta glyphs/) para o volume "$$cap_appname-tiles" pelo shell do servidor (docker cp ou o caminho do volume).
+            3. No gateway (Raspberry Pi da base): RASTRO_MQTT_HOST=<mqtt.seu-dominio>, RASTRO_MQTT_PORT=8883, RASTRO_MQTT_USERNAME=gateway, a senha "gateway" deste app, o ca.crt gerado e o mesmo prefixo de tópico.
+            4. Retenção e backup não rodam aqui: agende rastro_retention.py e rastro_backup.sh (cron do servidor ou Windmill) com os papéis <banco>_maint e <banco>_backup.
+            5. Guarde o token da API: é ele que libera o mapa.
+    variables:
+        - id: $$cap_tag
+          label: Versão (tag das imagens ghcr.io/digidem/rastro-*)
+          defaultValue: 'latest'
+          validRegex: /^[\w.-]{1,64}$/
+          description: A mesma tag vale para as 4 imagens (broker, ingest, api, web).
+
+        - id: $$cap_title
+          label: Título do mapa
+          defaultValue: 'Rastro'
+          validRegex: /^[\w À-ÿ.()-]{1,60}$/
+
+        - id: $$cap_topic_prefix
+          label: Prefixo dos tópicos MQTT
+          defaultValue: 'rastro'
+          validRegex: /^[a-z0-9_-]{1,32}$/
+          description: Deve ser igual ao configurado no gateway.
+
+        - id: $$cap_mqtt_pw_gateway
+          label: Senha MQTT do usuário "gateway"
+          defaultValue: $$cap_gen_random_hex(32)
+          validRegex: /^[A-Za-z0-9_.~-]{24,128}$/
+
+        - id: $$cap_mqtt_pw_ingest
+          label: Senha MQTT do usuário "ingest"
+          defaultValue: $$cap_gen_random_hex(32)
+          validRegex: /^[A-Za-z0-9_.~-]{24,128}$/
+
+        - id: $$cap_tls_ca_b64
+          label: RASTRO_TLS_CA_B64 (saída do rastro_gen_certs.sh --b64)
+          validRegex: /^[A-Za-z0-9+/=]{100,}$/
+
+        - id: $$cap_tls_crt_b64
+          label: RASTRO_TLS_SERVER_CRT_B64
+          validRegex: /^[A-Za-z0-9+/=]{100,}$/
+
+        - id: $$cap_tls_key_b64
+          label: RASTRO_TLS_SERVER_KEY_B64 (chave privada do broker)
+          validRegex: /^[A-Za-z0-9+/=]{100,}$/
+
+        - id: $$cap_pg_host
+          label: Host do PostgreSQL existente
+          defaultValue: 'srv-captain--postgres'
+          validRegex: /^[A-Za-z0-9.-]{1,253}$/
+
+        - id: $$cap_pg_port
+          label: Porta do PostgreSQL
+          defaultValue: '5432'
+          validRegex: /^[0-9]{1,5}$/
+
+        - id: $$cap_pg_database
+          label: Banco (o mesmo usado no bootstrap-existing.sh)
+          defaultValue: 'rastro'
+          validRegex: /^[a-z][a-z0-9_]{0,30}$/
+
+        - id: $$cap_pg_user_ingest
+          label: Usuário do ingest (<banco>_ingest)
+          defaultValue: 'rastro_ingest'
+          validRegex: /^[a-z][a-z0-9_]{0,62}$/
+
+        - id: $$cap_pg_pw_ingest
+          label: Senha do usuário do ingest
+
+        - id: $$cap_pg_user_viewer
+          label: Usuário da API (<banco>_viewer)
+          defaultValue: 'rastro_viewer'
+          validRegex: /^[a-z][a-z0-9_]{0,62}$/
+
+        - id: $$cap_pg_pw_viewer
+          label: Senha do usuário da API
+
+        - id: $$cap_api_token
+          label: Token de acesso ao mapa
+          defaultValue: $$cap_gen_random_hex(48)
+          validRegex: /^[A-Za-z0-9_.~-]{32,256}$/
