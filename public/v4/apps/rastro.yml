@@ -21,18 +21,18 @@ services:
     $$cap_appname-broker:
         image: communityfirst/rastro-broker:$$cap_tag
         restart: unless-stopped
-        ports:
-            - '8883:8883'
         volumes:
             - $$cap_appname-broker-data:/mosquitto/data
             - $$cap_appname-pki:/mosquitto/public
         environment:
+            RASTRO_MQTT_WEBSOCKETS: '1'
             RASTRO_MQTT_TOPIC_PREFIX: $$cap_topic_prefix
             RASTRO_MQTT_PASSWORD_GATEWAY: $$cap_mqtt_pw_gateway
             RASTRO_MQTT_PASSWORD_INGEST: $$cap_mqtt_pw_ingest
             RASTRO_BROKER_SANS: srv-captain--$$cap_appname-broker,$$cap_appname-broker,$$cap_appname-mqtt.$$cap_root_domain,$$cap_mqtt_extra_host
         caproverExtra:
-            notExposeAsWebApp: 'true'
+            containerHttpPort: '9001'
+            websocketSupport: 'true'
 
     $$cap_appname-ingest:
         image: communityfirst/rastro-ingest:$$cap_tag
@@ -103,15 +103,16 @@ caproverOneClickApp:
             2. Todas as senhas e o certificado TLS do broker são gerados automaticamente. O ÚNICO campo obrigatório é a conexão de admin do PostgreSQL, numa URL só: postgresql://usuario:senha@host:5432/banco (para Postgres externo/gerenciado, acrescente ?sslmode=require). No Postgres do CapRover: postgresql://postgres:<POSTGRES_PASSWORD>@srv-captain--postgres:5432/postgres, com o valor de POSTGRES_PASSWORD das variáveis de ambiente do app do Postgres. O usuário precisa ser superusuário ou ter CREATEROLE+CREATEDB. Host e porta ficam só neste app e são repassados ao ingest e à API por um volume; a URL (com a senha) fica só no app temporário -setup.
             3. Para instalar mais de um Rastro no mesmo servidor de Postgres, use um nome de banco diferente em cada um.
 
-            ANTES de continuar: as imagens communityfirst/rastro-* na versão escolhida precisam existir no Docker Hub, o DNS curinga (*.domínio-raiz) do CapRover precisa estar configurado e a porta 8883/TCP precisa estar aberta (o Docker publica por fora do ufw/iptables INPUT — restrinja no firewall do provedor, se precisar).
+            ANTES de continuar: as imagens communityfirst/rastro-* na versão escolhida precisam existir no Docker Hub, e o DNS curinga (*.domínio-raiz) do CapRover precisa estar configurado. Nenhuma porta extra precisa ser aberta: o gateway fala MQTT sobre HTTPS (WebSocket, porta 443).
         end: |-
             Rastro está subindo. Faça, nesta ordem:
             1. Abra os logs do app "$$cap_appname-setup" e espere a linha "OK: PostgreSQL preparado". Se aparecer "ERRO:", corrija a variável indicada (por exemplo, a URL de admin) e use Save & Restart nesse app. Com o OK, APAGUE o app "$$cap_appname-setup": ele guarda a URL (com a senha) de admin do Postgres. Antes de apagar, anote (nas variáveis de ambiente dele) as senhas RASTRO_PG_PASSWORD_MAINT e RASTRO_PG_PASSWORD_BACKUP — servem para o backup e a retenção. Ao apagar, NÃO marque o volume "$$cap_appname-pgconn" para remoção: ingest e API leem a conexão dele.
             2. No app "$$cap_appname": ative HTTPS e "Force HTTPS". A API recusa acesso sem HTTPS e o visualizador não envia credenciais em HTTP.
-            3. No gateway (Raspberry Pi da base): host $$cap_appname-mqtt.$$cap_root_domain (ou o seu domínio extra), porta 8883, usuário gateway, a senha MQTT do "gateway" (anote a que foi gerada nas variáveis do app $$cap_appname-broker: RASTRO_MQTT_PASSWORD_GATEWAY) e o mesmo prefixo de tópico. A CA do broker baixe em https://$$cap_appname.$$cap_root_domain/ca.crt (depois de ativar o HTTPS).
-            4. Guarde o token da API (variável RASTRO_API_TOKEN do app $$cap_appname-api): é ele que libera o mapa.
-            5. Basemap: já vem pronto (OpenStreetMap servido pela API do próprio Rastro, com token; o navegador não fala com o OSM). Opcional: para um basemap offline próprio, copie basemap.pmtiles para o volume "$$cap_appname-tiles". Para desligar o OSM, defina RASTRO_OSM_TILES=0 no app "$$cap_appname-api".
-            6. Retenção e backup não rodam aqui: agende rastro_retention.py e rastro_backup.sh (cron do servidor ou Windmill) com os papéis <banco>_maint e <banco>_backup.
+            3. No app "$$cap_appname-broker": em HTTP Settings ative "Enable HTTPS" (o proxy do CapRover termina o TLS e repassa o WebSocket ao broker).
+            4. No gateway (Raspberry Pi da base): RASTRO_MQTT_TRANSPORT=websockets, RASTRO_MQTT_HOST=$$cap_appname-broker.$$cap_root_domain, RASTRO_MQTT_PORT=443, RASTRO_MQTT_USERNAME=gateway, RASTRO_MQTT_PASSWORD = a senha do "gateway" (gerada; leia RASTRO_MQTT_PASSWORD_GATEWAY nas variáveis do app $$cap_appname-broker), RASTRO_MQTT_TOPIC_PREFIX igual ao prefixo escolhido e RASTRO_MQTT_CA_CERT vazio (o certificado é público, do Let's Encrypt). Alternativa direta (exige abrir 8883/TCP): porta 8883 com a CA de https://$$cap_appname.$$cap_root_domain/ca.crt.
+            5. Guarde o token da API (variável RASTRO_API_TOKEN do app $$cap_appname-api): é ele que libera o mapa.
+            6. Basemap: já vem pronto (OpenStreetMap servido pela API do próprio Rastro, com token; o navegador não fala com o OSM). Opcional: para um basemap offline próprio, copie basemap.pmtiles para o volume "$$cap_appname-tiles". Para desligar o OSM, defina RASTRO_OSM_TILES=0 no app "$$cap_appname-api".
+            7. Retenção e backup não rodam aqui: agende rastro_retention.py e rastro_backup.sh (cron do servidor ou Windmill) com os papéis <banco>_maint e <banco>_backup.
     variables:
         - id: $$cap_pg_admin_url
           label: Conexão de admin do PostgreSQL (OBRIGATÓRIA)
@@ -143,7 +144,7 @@ caproverOneClickApp:
 
         - id: $$cap_tag
           label: Versão (tag das imagens Docker Hub communityfirst/rastro-*)
-          defaultValue: '0.4.0'
+          defaultValue: '0.5.0'
           validRegex: /^[\w.-]{1,64}$/
           description: A mesma tag (versão publicada) vale para as imagens broker, ingest, api, web e pgtools.
 
