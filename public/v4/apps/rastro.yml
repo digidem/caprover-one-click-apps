@@ -7,15 +7,14 @@ services:
         environment:
             RASTRO_PGTOOLS_MODE: setup-service
             RASTRO_SETUP_APP: $$cap_appname-setup
-            RASTRO_PG_ADMIN_HOST: $$cap_pg_admin_host
-            RASTRO_PG_ADMIN_PORT: $$cap_pg_admin_port
-            RASTRO_PG_ADMIN_USER: $$cap_pg_admin_user
-            RASTRO_PG_ADMIN_PASSWORD: '$$cap_pg_admin_password'
+            RASTRO_PG_ADMIN_URL: '$$cap_pg_admin_url'
             RASTRO_DB: $$cap_pg_database
             RASTRO_PG_PASSWORD_INGEST: $$cap_pg_pw_ingest
             RASTRO_PG_PASSWORD_VIEWER: $$cap_pg_pw_viewer
             RASTRO_PG_PASSWORD_MAINT: $$cap_pg_pw_maint
             RASTRO_PG_PASSWORD_BACKUP: $$cap_pg_pw_backup
+        volumes:
+            - $$cap_appname-pgconn:/rastro-pgconn
         caproverExtra:
             notExposeAsWebApp: 'true'
 
@@ -43,6 +42,7 @@ services:
             - $$cap_appname-broker
         volumes:
             - $$cap_appname-pki:/rastro-pki
+            - $$cap_appname-pgconn:/rastro-pgconn
         environment:
             RASTRO_MQTT_HOST: srv-captain--$$cap_appname-broker
             RASTRO_MQTT_PORT: '8883'
@@ -51,8 +51,6 @@ services:
             RASTRO_MQTT_CA_CERT: /rastro-pki/ca.crt
             RASTRO_MQTT_CLIENT_ID: $$cap_appname-ingest-1
             RASTRO_MQTT_TOPIC_PREFIX: $$cap_topic_prefix
-            RASTRO_PG_HOST: $$cap_pg_admin_host
-            RASTRO_PG_PORT: $$cap_pg_admin_port
             RASTRO_PG_DB: $$cap_pg_database
             RASTRO_PG_PASSWORD: $$cap_pg_pw_ingest
             RASTRO_LOG_LEVEL: INFO
@@ -64,13 +62,13 @@ services:
         restart: unless-stopped
         depends_on:
             - $$cap_appname-setup
+        volumes:
+            - $$cap_appname-pgconn:/rastro-pgconn
         environment:
             RASTRO_API_AUTH: token
             RASTRO_API_TOKEN: $$cap_api_token
             RASTRO_API_HOSTS_LOCAIS: ''
             RASTRO_REQUIRE_HTTPS: '1'
-            RASTRO_PG_HOST: $$cap_pg_admin_host
-            RASTRO_PG_PORT: $$cap_pg_admin_port
             RASTRO_PG_DB: $$cap_pg_database
             RASTRO_PG_PASSWORD: $$cap_pg_pw_viewer
             RASTRO_LOG_LEVEL: INFO
@@ -94,7 +92,7 @@ services:
 caproverOneClickApp:
     displayName: Rastro
     isOfficial: false
-    description: Rastreamento de rádios Meshtastic em mapa próprio — broker MQTT com TLS automático, ingestão para o seu PostgreSQL, API e visualizador. Só a senha de admin do Postgres é obrigatória.
+    description: Rastreamento de rádios Meshtastic em mapa próprio — broker MQTT com TLS automático, ingestão para o seu PostgreSQL, API e visualizador. Só a conexão de admin do Postgres (uma URL) é obrigatória.
     documentation: https://github.com/digidem/rastro
     instructions:
         start: |-
@@ -102,39 +100,23 @@ caproverOneClickApp:
 
             O que esta instalação faz:
             1. Sobe o app "<nome>-setup", que cria no seu PostgreSQL um banco, um schema e 5 papéis DEDICADOS (prefixo = nome do banco). Não toca em nada fora deles, recusa nomes que já sejam de outra coisa, nunca apaga nada e usa timeouts para não atrapalhar outras cargas.
-            2. Todas as senhas e o certificado TLS do broker são gerados automaticamente. O ÚNICO campo obrigatório é a senha de admin do PostgreSQL: copie o valor de POSTGRES_PASSWORD nas variáveis de ambiente do app do Postgres no CapRover.
+            2. Todas as senhas e o certificado TLS do broker são gerados automaticamente. O ÚNICO campo obrigatório é a conexão de admin do PostgreSQL, numa URL só: postgresql://usuario:senha@host:5432/banco (para Postgres externo/gerenciado, acrescente ?sslmode=require). No Postgres do CapRover: postgresql://postgres:<POSTGRES_PASSWORD>@srv-captain--postgres:5432/postgres, com o valor de POSTGRES_PASSWORD das variáveis de ambiente do app do Postgres. O usuário precisa ser superusuário ou ter CREATEROLE+CREATEDB. Host e porta ficam só neste app e são repassados ao ingest e à API por um volume; a URL (com a senha) fica só no app temporário -setup.
             3. Para instalar mais de um Rastro no mesmo servidor de Postgres, use um nome de banco diferente em cada um.
 
             ANTES de continuar: as imagens communityfirst/rastro-* na versão escolhida precisam existir no Docker Hub, o DNS curinga (*.domínio-raiz) do CapRover precisa estar configurado e a porta 8883/TCP precisa estar aberta (o Docker publica por fora do ufw/iptables INPUT — restrinja no firewall do provedor, se precisar).
         end: |-
             Rastro está subindo. Faça, nesta ordem:
-            1. Abra os logs do app "$$cap_appname-setup" e espere a linha "OK: PostgreSQL preparado". Se aparecer "ERRO:", corrija a variável indicada e use Save & Restart nesse app. Com o OK, APAGUE o app "$$cap_appname-setup": ele guarda a senha de admin do Postgres. Antes de apagar, anote (nas variáveis de ambiente dele) as senhas RASTRO_PG_PASSWORD_MAINT e RASTRO_PG_PASSWORD_BACKUP — servem para o backup e a retenção.
+            1. Abra os logs do app "$$cap_appname-setup" e espere a linha "OK: PostgreSQL preparado". Se aparecer "ERRO:", corrija a variável indicada (por exemplo, a URL de admin) e use Save & Restart nesse app. Com o OK, APAGUE o app "$$cap_appname-setup": ele guarda a URL (com a senha) de admin do Postgres. Antes de apagar, anote (nas variáveis de ambiente dele) as senhas RASTRO_PG_PASSWORD_MAINT e RASTRO_PG_PASSWORD_BACKUP — servem para o backup e a retenção. Ao apagar, NÃO marque o volume "$$cap_appname-pgconn" para remoção: ingest e API leem a conexão dele.
             2. No app "$$cap_appname": ative HTTPS e "Force HTTPS". A API recusa acesso sem HTTPS e o visualizador não envia credenciais em HTTP.
             3. No gateway (Raspberry Pi da base): host $$cap_appname-mqtt.$$cap_root_domain (ou o seu domínio extra), porta 8883, usuário gateway, a senha MQTT do "gateway" (anote a que foi gerada nas variáveis do app $$cap_appname-broker: RASTRO_MQTT_PASSWORD_GATEWAY) e o mesmo prefixo de tópico. A CA do broker baixe em https://$$cap_appname.$$cap_root_domain/ca.crt (depois de ativar o HTTPS).
             4. Guarde o token da API (variável RASTRO_API_TOKEN do app $$cap_appname-api): é ele que libera o mapa.
             5. Basemap: copie o arquivo .pmtiles (e a pasta glyphs/) para o volume "$$cap_appname-tiles" pelo shell do servidor (docker cp ou o caminho do volume).
             6. Retenção e backup não rodam aqui: agende rastro_retention.py e rastro_backup.sh (cron do servidor ou Windmill) com os papéis <banco>_maint e <banco>_backup.
     variables:
-        - id: $$cap_pg_admin_password
-          label: Senha de admin do PostgreSQL (OBRIGATÓRIA)
-          validRegex: /^[^'\n\r]{8,256}$/
-          description: Copie do valor de POSTGRES_PASSWORD nas variáveis de ambiente do app do Postgres no CapRover. É usada só pelo app temporário "-setup", que você apaga depois.
-
-        - id: $$cap_pg_admin_host
-          label: Host do PostgreSQL existente
-          defaultValue: 'srv-captain--postgres'
-          validRegex: /^[A-Za-z0-9.-]{1,253}$/
-          description: No CapRover, o nome do app do Postgres com prefixo srv-captain-- (padrão para um app chamado "postgres").
-
-        - id: $$cap_pg_admin_port
-          label: Porta do PostgreSQL
-          defaultValue: '5432'
-          validRegex: /^[0-9]{1,5}$/
-
-        - id: $$cap_pg_admin_user
-          label: Usuário de admin do PostgreSQL
-          defaultValue: 'postgres'
-          validRegex: /^[A-Za-z_][A-Za-z0-9_.-]{0,62}$/
+        - id: $$cap_pg_admin_url
+          label: Conexão de admin do PostgreSQL (OBRIGATÓRIA)
+          validRegex: /^postgres(ql)?:\/\/[^'\s]+$/
+          description: 'URL no formato postgresql://usuario:senha@host:5432/banco. O "banco" pode ser qualquer banco já existente ao qual o usuário consiga conectar (por exemplo, o da sua string de conexão atual). Para Postgres externo/gerenciado acrescente ?sslmode=require. O usuário precisa ser superusuário ou ter CREATEROLE+CREATEDB. Caracteres especiais na senha (@ : / % #) vão com percent-encoding (%40 %3A %2F %25 %23). No CapRover: postgresql://postgres:<POSTGRES_PASSWORD>@srv-captain--postgres:5432/postgres. É usada só pelo app temporário "-setup", que você apaga depois.'
 
         - id: $$cap_pg_database
           label: Nome do banco (e prefixo dos papéis)
@@ -161,7 +143,7 @@ caproverOneClickApp:
 
         - id: $$cap_tag
           label: Versão (tag das imagens Docker Hub communityfirst/rastro-*)
-          defaultValue: '0.2.0'
+          defaultValue: '0.3.0'
           validRegex: /^[\w.-]{1,64}$/
           description: A mesma tag (versão publicada) vale para as imagens broker, ingest, api, web e pgtools.
 
