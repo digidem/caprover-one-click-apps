@@ -2,7 +2,7 @@ captainVersion: 4
 
 services:
     $$cap_appname-broker:
-        image: ghcr.io/digidem/rastro-broker:$$cap_tag
+        image: communityfirst/rastro-broker:$$cap_tag
         restart: unless-stopped
         ports:
             - '8883:8883'
@@ -19,7 +19,7 @@ services:
             notExposeAsWebApp: 'true'
 
     $$cap_appname-ingest:
-        image: ghcr.io/digidem/rastro-ingest:$$cap_tag
+        image: communityfirst/rastro-ingest:$$cap_tag
         restart: unless-stopped
         depends_on:
             - $$cap_appname-broker
@@ -41,7 +41,7 @@ services:
             notExposeAsWebApp: 'true'
 
     $$cap_appname-api:
-        image: ghcr.io/digidem/rastro-api:$$cap_tag
+        image: communityfirst/rastro-api:$$cap_tag
         restart: unless-stopped
         environment:
             RASTRO_API_AUTH: token
@@ -58,7 +58,7 @@ services:
             notExposeAsWebApp: 'true'
 
     $$cap_appname:
-        image: ghcr.io/digidem/rastro-web:$$cap_tag
+        image: communityfirst/rastro-web:$$cap_tag
         restart: unless-stopped
         depends_on:
             - $$cap_appname-api
@@ -97,7 +97,7 @@ caproverOneClickApp:
             5. Guarde o token da API: é ele que libera o mapa.
     variables:
         - id: $$cap_tag
-          label: Versão (tag das imagens ghcr.io/digidem/rastro-*)
+          label: Versão (tag das imagens Docker Hub communityfirst/rastro-*)
           defaultValue: '0.1.0'
           validRegex: /^[\w.-]{1,64}$/
           description: A mesma tag (versão publicada) vale para as 4 imagens (broker, ingest, api, web).
