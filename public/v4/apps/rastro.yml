@@ -144,7 +144,7 @@ caproverOneClickApp:
 
         - id: $$cap_tag
           label: Versão (tag das imagens Docker Hub communityfirst/rastro-*)
-          defaultValue: '0.5.0'
+          defaultValue: '0.5.1'
           validRegex: /^[\w.-]{1,64}$/
           description: A mesma tag (versão publicada) vale para as imagens broker, ingest, api, web e pgtools.
 
