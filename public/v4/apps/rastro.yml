@@ -84,8 +84,8 @@ caproverOneClickApp:
             2. No PostgreSQL existente, rode `deploy/postgres/bootstrap-existing.sh` do repositório rastro (cria banco, schema e os papéis <banco>_ingest e <banco>_viewer). Use as mesmas senhas nos campos abaixo.
             3. Gere os certificados do broker com o nome do app e o domínio público do MQTT:
                scripts/rastro_gen_certs.sh --cert-dir ~/rastro-certs --san DNS:<mqtt.seu-dominio> --san DNS:srv-captain--<nome-do-app>-broker --san DNS:<nome-do-app>-broker --b64
-               e cole os valores *_B64 nos campos abaixo (a chave privada do servidor NÃO deve ficar em chat nem em histórico).
-            4. No firewall do servidor, libere só a porta 8883/TCP (MQTT com TLS).
+               e cole os valores *_B64 nos campos abaixo (a chave privada do servidor NÃO deve ficar em chat nem em histórico). Alternativa: monte ca.crt, server.crt e server.key em /mosquitto/secrets do app <nome>-broker e deixe vazios os campos do certificado e da chave do servidor (o da CA continua obrigatório: o ingest usa).
+            4. Porta 8883/TCP: o Docker publica por fora do ufw/iptables INPUT — restrinja no firewall do provedor/host, se precisar.
         end: |-
             Rastro está subindo.
 
@@ -98,14 +98,14 @@ caproverOneClickApp:
     variables:
         - id: $$cap_tag
           label: Versão (tag das imagens ghcr.io/digidem/rastro-*)
-          defaultValue: 'latest'
+          defaultValue: '0.1.0'
           validRegex: /^[\w.-]{1,64}$/
-          description: A mesma tag vale para as 4 imagens (broker, ingest, api, web).
+          description: A mesma tag (versão publicada) vale para as 4 imagens (broker, ingest, api, web).
 
         - id: $$cap_title
           label: Título do mapa
           defaultValue: 'Rastro'
-          validRegex: /^[\w À-ÿ.()-]{1,60}$/
+          validRegex: /^[\w À-ÿ.()-]{1,30}$/
 
         - id: $$cap_topic_prefix
           label: Prefixo dos tópicos MQTT
@@ -128,12 +128,12 @@ caproverOneClickApp:
           validRegex: /^[A-Za-z0-9+/=]{100,}$/
 
         - id: $$cap_tls_crt_b64
-          label: RASTRO_TLS_SERVER_CRT_B64
-          validRegex: /^[A-Za-z0-9+/=]{100,}$/
+          label: RASTRO_TLS_SERVER_CRT_B64 (vazio se os arquivos forem montados em /mosquitto/secrets)
+          validRegex: /^([A-Za-z0-9+/=]{100,})?$/
 
         - id: $$cap_tls_key_b64
-          label: RASTRO_TLS_SERVER_KEY_B64 (chave privada do broker)
-          validRegex: /^[A-Za-z0-9+/=]{100,}$/
+          label: RASTRO_TLS_SERVER_KEY_B64 (chave privada do broker; vazio se os arquivos forem montados)
+          validRegex: /^([A-Za-z0-9+/=]{100,})?$/
 
         - id: $$cap_pg_host
           label: Host do PostgreSQL existente
@@ -156,7 +156,9 @@ caproverOneClickApp:
           validRegex: /^[a-z][a-z0-9_]{0,62}$/
 
         - id: $$cap_pg_pw_ingest
-          label: Senha do usuário do ingest
+          label: Senha do usuário do ingest (a mesma do bootstrap)
+          validRegex: /^[A-Za-z0-9_.~-]{24,128}$/
+          description: Gere com openssl rand -hex 24 (só letras, números e _ . ~ -).
 
         - id: $$cap_pg_user_viewer
           label: Usuário da API (<banco>_viewer)
@@ -164,7 +166,8 @@ caproverOneClickApp:
           validRegex: /^[a-z][a-z0-9_]{0,62}$/
 
         - id: $$cap_pg_pw_viewer
-          label: Senha do usuário da API
+          label: Senha do usuário da API (a mesma do bootstrap)
+          validRegex: /^[A-Za-z0-9_.~-]{24,128}$/
 
         - id: $$cap_api_token
           label: Token de acesso ao mapa
