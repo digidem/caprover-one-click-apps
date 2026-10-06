@@ -29,6 +29,10 @@ services:
             RASTRO_MQTT_TOPIC_PREFIX: $$cap_topic_prefix
             RASTRO_MQTT_PASSWORD_GATEWAY: $$cap_mqtt_pw_gateway
             RASTRO_MQTT_PASSWORD_INGEST: $$cap_mqtt_pw_ingest
+            RASTRO_MQTT_PASSWORD_OUTBOX: $$cap_mqtt_pw_outbox
+            RASTRO_NATIVE_ROOT: $$cap_native_root
+            RASTRO_NATIVE_NODES: '$$cap_native_nodes'
+            RASTRO_NATIVE_SECRET: $$cap_native_secret
             RASTRO_BROKER_SANS: srv-captain--$$cap_appname-broker,$$cap_appname-broker,$$cap_appname-mqtt.$$cap_root_domain,$$cap_mqtt_extra_host
         caproverExtra:
             containerHttpPort: '9001'
@@ -51,6 +55,35 @@ services:
             RASTRO_MQTT_CA_CERT: /rastro-pki/ca.crt
             RASTRO_MQTT_CLIENT_ID: $$cap_appname-ingest-1
             RASTRO_MQTT_TOPIC_PREFIX: $$cap_topic_prefix
+            RASTRO_PG_DB: $$cap_pg_database
+            RASTRO_PG_PASSWORD: $$cap_pg_pw_ingest
+            RASTRO_LOG_LEVEL: INFO
+            RASTRO_NATIVE_ENABLED: '$$cap_native_enabled'
+            RASTRO_NATIVE_ROOT: $$cap_native_root
+            RASTRO_EVU_PSK_B64: '$$cap_evu_psk'
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname-chat:
+        image: communityfirst/rastro-chat:$$cap_tag
+        restart: unless-stopped
+        depends_on:
+            - $$cap_appname-setup
+            - $$cap_appname-broker
+        volumes:
+            - $$cap_appname-pki:/rastro-pki
+            - $$cap_appname-pgconn:/rastro-pgconn
+        environment:
+            RASTRO_MQTT_HOST: srv-captain--$$cap_appname-broker
+            RASTRO_MQTT_PORT: '8883'
+            RASTRO_MQTT_USERNAME: outbox
+            RASTRO_MQTT_PASSWORD: $$cap_mqtt_pw_outbox
+            RASTRO_MQTT_CA_CERT: /rastro-pki/ca.crt
+            RASTRO_MQTT_CLIENT_ID: $$cap_appname-chat-1
+            RASTRO_NATIVE_ROOT: $$cap_native_root
+            RASTRO_NATIVE_NODES: '$$cap_native_nodes'
+            RASTRO_EVU_PSK_B64: '$$cap_evu_psk'
+            RASTRO_CHAT_ENABLED: '$$cap_native_enabled'
             RASTRO_PG_DB: $$cap_pg_database
             RASTRO_PG_PASSWORD: $$cap_pg_pw_ingest
             RASTRO_LOG_LEVEL: INFO
@@ -113,6 +146,7 @@ caproverOneClickApp:
             5. Guarde o token da API (variável RASTRO_API_TOKEN do app $$cap_appname-api): é ele que libera o mapa.
             6. Basemap: já vem pronto (OpenStreetMap servido pela API do próprio Rastro, com token; o navegador não fala com o OSM). Opcional: para um basemap offline próprio, copie basemap.pmtiles para o volume "$$cap_appname-tiles". Para desligar o OSM, defina RASTRO_OSM_TILES=0 no app "$$cap_appname-api".
             7. Retenção e backup não rodam aqui: agende rastro_retention.py e rastro_backup.sh (cron do servidor ou Windmill) com os papéis <banco>_maint e <banco>_backup.
+            8. Ingest nativo + chat (opcional, desligado por padrão): preencha a chave do canal EVU, a raiz dos tópicos e os nós (!id=barco), mude "Ingest nativo + chat" para 1 e reimplante. No app "$$cap_appname-broker" abra a porta 8883 (TCP) no firewall do servidor e use um certificado TLS de uma CA reconhecida pelos rádios/app. A conta MQTT de cada nó é o próprio !id; a senha é derivada do segredo da variável RASTRO_NATIVE_SECRET do app "$$cap_appname-broker" (python3 scripts/rastro_node_credentials.py do repositório digidem/rastro). O chat do escritório aparece no mapa.
     variables:
         - id: $$cap_pg_admin_url
           label: Conexão de admin do PostgreSQL (OBRIGATÓRIA)
@@ -142,11 +176,45 @@ caproverOneClickApp:
           validRegex: /^[a-z0-9_-]{1,32}$/
           description: Deve ser igual ao configurado no gateway.
 
+        - id: $$cap_native_enabled
+          label: Ingest nativo + chat (0 = desligado, 1 = ligado)
+          defaultValue: '0'
+          validRegex: /^[01]$/
+          description: Deixe 0 até preencher a chave do canal EVU e os nós abaixo. Com 1, o ingest assina os tópicos nativos do firmware e o app "-chat" publica mensagens do escritório aos barcos.
+
+        - id: $$cap_evu_psk
+          label: Chave (PSK) do canal EVU em base64 (a mesma dos rádios)
+          defaultValue: ''
+          validRegex: /^[A-Za-z0-9+\/=]{0,64}$/
+          description: Fica só nos apps "-ingest" e "-chat" (variável de ambiente). Nunca é registrada em log. Vazio = nativo desligado.
+
+        - id: $$cap_native_root
+          label: Raiz dos tópicos MQTT nativos do firmware
+          defaultValue: 'univaja/mesh'
+          validRegex: /^[a-z0-9_-]{1,32}(\/[a-z0-9_-]{1,32}){0,3}$/
+          description: Deve ser igual à raiz configurada nos rádios (Root topic). O firmware publica em <raiz>/2/e/<canal>/<id-do-nó>.
+
+        - id: $$cap_native_nodes
+          label: Nós dos barcos no formato !id=barco, separados por vírgula
+          defaultValue: ''
+          validRegex: /^(![0-9a-f]{8}=[a-z0-9_-]{1,16}(,![0-9a-f]{8}=[a-z0-9_-]{1,16}){0,63})?$/
+          description: 'Exemplo: !a1b2c3d4=barco1,!e5f6a7b8=barco2. Cada nó ganha uma conta MQTT própria e cada barco, um gateway virtual para o chat. A senha de cada nó é derivada do segredo abaixo — veja scripts/rastro_node_credentials.py no repositório.'
+
+        - id: $$cap_native_secret
+          label: Segredo que deriva as senhas MQTT dos nós (gerado automaticamente — anote)
+          defaultValue: $$cap_gen_random_hex(32)
+          validRegex: /^[A-Za-z0-9_.~-]{24,128}$/
+
+        - id: $$cap_mqtt_pw_outbox
+          label: Senha MQTT do usuário "outbox" (gerada automaticamente — não precisa mudar)
+          defaultValue: $$cap_gen_random_hex(32)
+          validRegex: /^[A-Za-z0-9_.~-]{24,128}$/
+
         - id: $$cap_tag
           label: Versão (tag das imagens Docker Hub communityfirst/rastro-*)
-          defaultValue: '0.5.1'
+          defaultValue: '0.8.0'
           validRegex: /^[\w.-]{1,64}$/
-          description: A mesma tag (versão publicada) vale para as imagens broker, ingest, api, web e pgtools.
+          description: A mesma tag (versão publicada) vale para as imagens broker, ingest, chat, api, web e pgtools.
 
         - id: $$cap_mqtt_pw_gateway
           label: Senha MQTT do usuário "gateway" (gerada automaticamente — não precisa mudar; anote, o gateway usa)
