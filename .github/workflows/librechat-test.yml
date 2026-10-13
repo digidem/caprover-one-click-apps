@@ -1,0 +1,35 @@
+name: LibreChat template test
+
+on:
+    push:
+        branches:
+            - master
+        paths:
+            - public/v4/apps/librechat.yml
+            - scripts/librechat-boot.sh
+            - scripts/test_librechat_config.js
+            - scripts/test_librechat_config.sh
+            - scripts/sync_librechat_boot.js
+            - scripts/superset_mint_mcp_token.py
+            - .github/workflows/librechat-test.yml
+    pull_request:
+        branches:
+            - master
+        paths:
+            - public/v4/apps/librechat.yml
+            - scripts/librechat-boot.sh
+            - scripts/test_librechat_config.js
+            - scripts/test_librechat_config.sh
+            - scripts/sync_librechat_boot.js
+            - scripts/superset_mint_mcp_token.py
+            - .github/workflows/librechat-test.yml
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v3
+            - uses: actions/setup-node@v3
+              with:
+                  node-version: 20
+            - run: npm ci && node scripts/validate_apps.js && npx prettier --check "./public/**/*.(json|yml)" && bash scripts/test_librechat_config.sh

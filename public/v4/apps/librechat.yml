@@ -1,0 +1,176 @@
+captainVersion: 4
+
+services:
+    $$cap_appname:
+        image: docker.io/librechat/librechat-api:$$cap_librechat_version
+        restart: unless-stopped
+        depends_on:
+            - $$cap_appname-mongodb
+            - $$cap_appname-pg-mcp
+        command:
+            - 'sh'
+            - '-c'
+            - "#!/bin/sh\n# LibreChat one-click startup script (canonical source).\n# Spec: specs/librechat-mcp.md 3.3. Template public/v4/apps/librechat.yml embeds\n# this file byte-equal as element 3 of the api service `command` array; the\n# repo test (scripts/test_librechat_config.sh) asserts that equality.\n# CapRover template placeholders live only in the template's own fields (image\n# tags, service names, env values), never inside this text. All user values\n# arrive as env vars and are validated before any write.\n\nset -eu\n\n# librechat-data-provider and js-yaml resolve from these paths in the pinned\n# image (specs/spike-images.md). Exported so the checks also work when the\n# script runs from another working directory.\nNODE_PATH=\"/app/node_modules:/app/api/node_modules${NODE_PATH:+:$NODE_PATH}\"\nexport NODE_PATH\n\nCONFIG_FILE=\"${CONFIG_PATH:-/app/librechat.yaml}\"\nexport CONFIG_FILE\nTMP_FILE=\"$CONFIG_FILE.tmp\"\n\n# ---------- pre-check: validate resolved env values before any file write ----\n# Regexes mirror the 3.4 validRegex strings; scripts/test_librechat_config.sh\n# asserts the two stay identical (spec 5.2b).\nnode -e '\nvar env = process.env;\nvar fail = function (name) {\n  console.error(\"librechat-boot: invalid or missing variable: \" + name);\n  process.exit(1);\n};\nvar re = {\n  LLM_NAME: /^[\\w .-]{1,32}$/,\n  LLM_DEFAULT_MODEL: /^[\\w.:\\/-]{1,128}$/,\n  LLM_MODELS: /^[\\w.:\\/-]{1,128}([,][\\w.:\\/-]{1,128}){0,31}$/,\n  PG_MCP_ENABLED: /^[01]$/,\n  LLM_API_KEY: /^[A-Za-z0-9_.~:-]{0,512}$/,\n  WINDMILL_MCP_TOKEN: /^[A-Za-z0-9_.~-]{0,256}$/,\n  SUPERSET_MCP_TOKEN: /^[A-Za-z0-9_.~=-]{0,4096}$/\n};\nvar optional = { LLM_API_KEY: 1, WINDMILL_MCP_TOKEN: 1, SUPERSET_MCP_TOKEN: 1 };\nObject.keys(re).forEach(function (name) {\n  var value = env[name];\n  if (optional[name] && (value === undefined || value === null)) value = \"\";\n  if (value === undefined || value === null || !re[name].test(value)) {\n    fail(name);\n  }\n});\nvar banned = /[\\x27\\x22\\\\\\s]/;\nvar urlOk = function (raw) {\n  if (banned.test(raw)) return false;\n  var u;\n  try { u = new URL(raw); } catch (e) { return false; }\n  if (u.username || u.password) return false;\n  var keys = [];\n  u.searchParams.forEach(function (v, k) { keys.push(k); });\n  for (var i = 0; i < keys.length; i++) {\n    if (/^(token|api_key|apikey|access_token)$/i.test(keys[i])) return false;\n  }\n  if (u.protocol === \"https:\") return true;\n  return u.protocol === \"http:\" && /^srv-captain--[a-z0-9-]+$/.test(u.hostname);\n};\nif (!env.LLM_BASE_URL || !urlOk(env.LLM_BASE_URL)) fail(\"LLM_BASE_URL\");\nif (env.WINDMILL_MCP_URL && !urlOk(env.WINDMILL_MCP_URL)) fail(\"WINDMILL_MCP_URL\");\nif (env.SUPERSET_MCP_URL && !urlOk(env.SUPERSET_MCP_URL)) fail(\"SUPERSET_MCP_URL\");\n'\n\n# ---------- generation --------------------------------------------------------\n# Concrete values (endpoint name, default model) are written as single-quoted\n# YAML scalars from validated env; everything secret stays a literal ${VAR}\n# placeholder that LibreChat resolves from process.env at runtime (spec 3.3).\nAPI_KEY_LINE=\"      apiKey: 'user_provided'\"\nif [ -n \"${LLM_API_KEY:-}\" ]; then\n  API_KEY_LINE=\"      apiKey: '\\${LLM_API_KEY}'\"\nfi\n\nMCP_PART=\"\"\nif [ \"${PG_MCP_ENABLED}\" = \"1\" ]; then\n  MCP_PART=\"${MCP_PART}  postgres:\n    type: sse\n    url: '\\${PG_MCP_URL}'\n    initTimeout: 30000\n\"\nfi\nif [ -n \"${WINDMILL_MCP_URL:-}\" ]; then\n  MCP_PART=\"${MCP_PART}  windmill:\n    type: streamable-http\n    url: '\\${WINDMILL_MCP_URL}'\n    initTimeout: 30000\n\"\n  if [ -n \"${WINDMILL_MCP_TOKEN:-}\" ]; then\n    MCP_PART=\"${MCP_PART}    headers:\n      Authorization: 'Bearer \\${WINDMILL_MCP_TOKEN}'\n\"\n  fi\nfi\nif [ -n \"${SUPERSET_MCP_URL:-}\" ]; then\n  MCP_PART=\"${MCP_PART}  superset:\n    type: streamable-http\n    url: '\\${SUPERSET_MCP_URL}'\n    initTimeout: 30000\n\"\n  if [ -n \"${SUPERSET_MCP_TOKEN:-}\" ]; then\n    MCP_PART=\"${MCP_PART}    headers:\n      Authorization: 'Bearer \\${SUPERSET_MCP_TOKEN}'\n\"\n  fi\nfi\n\n{\n  printf \"version: '1.2.8'\\n\"\n  printf 'cache: true\\n'\n  printf 'interface: {}\\n'\n  printf 'endpoints:\\n'\n  printf '  custom:\\n'\n  printf \"    - name: '%s'\\n\" \"$LLM_NAME\"\n  printf '%s\\n' \"$API_KEY_LINE\"\n  printf \"      baseURL: '\\${LLM_BASE_URL}'\\n\"\n  printf '      models:\\n'\n  printf '        default:\\n'\n  printf \"          - '%s'\\n\" \"$LLM_DEFAULT_MODEL\"\n  OLDIFS=$IFS\n  IFS=,\n  for m in $LLM_MODELS; do\n    if [ \"$m\" != \"$LLM_DEFAULT_MODEL\" ]; then\n      printf \"          - '%s'\\n\" \"$m\"\n    fi\n  done\n  IFS=$OLDIFS\n  printf '        fetch: false\\n'\n  printf '      titleConvo: false\\n'\n  if [ -n \"$MCP_PART\" ]; then\n    printf 'mcpServers:\\n'\n    printf '%s' \"$MCP_PART\"\n  fi\n} > \"$TMP_FILE\"\nmv \"$TMP_FILE\" \"$CONFIG_FILE\"\n\n# ---------- post-check: validate the generated file against LibreChat's schema\nnode -e '\nvar fs = require(\"fs\");\nvar yaml = require(\"js-yaml\");\nvar dataProvider = require(\"librechat-data-provider\");\nvar file = process.env.CONFIG_FILE;\nvar raw = fs.readFileSync(file, \"utf8\");\nvar doc;\ntry {\n  doc = yaml.load(raw);\n} catch (e) {\n  console.error(\"librechat-boot: generated config is not valid YAML: \" + e.message);\n  process.exit(1);\n}\nvar result = dataProvider.configSchema.strict().safeParse(doc);\nif (!result.success) {\n  console.error(\"librechat-boot: generated config failed LibreChat schema validation: \" + JSON.stringify(result.error.issues));\n  process.exit(1);\n}\n'\n\n# ---------- run ---------------------------------------------------------------\nexec node server/index.js\n"
+        volumes:
+            - $$cap_appname-uploads:/app/uploads
+            - $$cap_appname-images:/app/client/public/images
+            - $$cap_appname-logs:/app/api/logs
+        environment:
+            MONGO_URI: 'mongodb://librechat:$$cap_mongo_password@srv-captain--$$cap_appname-mongodb:27017/LibreChat?authSource=admin'
+            HOST: '0.0.0.0'
+            PORT: '3080'
+            NODE_ENV: production
+            TRUST_PROXY: '1'
+            DOMAIN_CLIENT: https://$$cap_appname.$$cap_root_domain
+            DOMAIN_SERVER: https://$$cap_appname.$$cap_root_domain
+            CREDS_KEY: $$cap_creds_key
+            CREDS_IV: $$cap_creds_iv
+            JWT_SECRET: $$cap_jw_secret
+            JWT_REFRESH_SECRET: $$cap_jw_refresh_secret
+            ALLOW_REGISTRATION: '$$cap_allow_registration'
+            SEARCH: 'false'
+            LLM_NAME: $$cap_llm_name
+            LLM_BASE_URL: $$cap_llm_base_url
+            LLM_API_KEY: $$cap_llm_api_key
+            LLM_DEFAULT_MODEL: $$cap_llm_default_model
+            LLM_MODELS: $$cap_llm_models
+            PG_MCP_ENABLED: '$$cap_pg_mcp_enabled'
+            PG_MCP_URL: 'http://srv-captain--$$cap_appname-pg-mcp:8000/sse'
+            WINDMILL_MCP_URL: '$$cap_windmill_mcp_url'
+            WINDMILL_MCP_TOKEN: $$cap_windmill_mcp_token
+            SUPERSET_MCP_URL: '$$cap_superset_mcp_url'
+            SUPERSET_MCP_TOKEN: $$cap_superset_mcp_token
+        caproverExtra:
+            containerHttpPort: '3080'
+
+    $$cap_appname-mongodb:
+        image: mongo:$$cap_mongo_version
+        restart: unless-stopped
+        volumes:
+            - $$cap_appname-mongo-data:/data/db
+        environment:
+            MONGO_INITDB_ROOT_USERNAME: librechat
+            MONGO_INITDB_ROOT_PASSWORD: $$cap_mongo_password
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+    $$cap_appname-pg-mcp:
+        image: crystaldba/postgres-mcp:0.3.0
+        restart: unless-stopped
+        command:
+            [
+                'sh',
+                '-c',
+                'if [ -z "${DATABASE_URI:-}" ]; then echo pg-mcp-disabled; exec tail -f /dev/null; fi; exec postgres-mcp --access-mode=restricted --transport=sse --sse-host=0.0.0.0 --sse-port=8000',
+            ]
+        environment:
+            DATABASE_URI: '$$cap_pg_mcp_database_uri'
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+caproverOneClickApp:
+    displayName: LibreChat
+    isOfficial: false
+    description: Self-hosted LibreChat chat UI with optional one-click MCP integrations - Postgres (read-only), Windmill automations, Superset dashboards.
+    documentation: https://github.com/digidem/caprover-one-click-apps
+    instructions:
+        start: |-
+            One install gives you LibreChat (chat UI) with its own MongoDB, plus an optional Postgres helper app. MCP integrations (Postgres, Windmill, Superset) are optional: leave the field empty and that integration is simply absent.
+            Before you install, prepare:
+            1. A CapRover wildcard DNS (*.root-domain) - HTTPS needs it.
+            2. A CPU with AVX (required by Mongo 8).
+            3. Postgres MCP: a SELECT-only Postgres role and its DSN. Note: any MCP URL must be https:// (or http://srv-captain--<name> for apps on this same CapRover) - the app refuses other URLs at startup.
+            4. Windmill: version 1.484.0 or newer, a dedicated workspace, a non-admin user, and an MCP token.
+            5. Superset 6.1.0 with the MCP process running and a minted token (see https://github.com/digidem/caprover-one-click-apps/blob/master/docs/librechat-integrations.md).
+        end: |-
+            LibreChat is deploying. In this order:
+            1. On app "$$cap_appname": enable HTTPS and Force HTTPS BEFORE the first login. Login cookies need HTTPS; over plain HTTP login fails or loops. Custom domain: enable HTTPS on it, then set DOMAIN_CLIENT and DOMAIN_SERVER to https://<your-domain>.
+            2. Open the app URL, create the first account, then set ALLOW_REGISTRATION=false on app "$$cap_appname" and let it redeploy.
+            3. AI key: without LLM_API_KEY each user enters their own key in the UI (endpoint "Tinfoil"); with it, everyone shares that key.
+            4. Store CREDS_KEY, CREDS_IV and the Mongo password somewhere safe. Without CREDS_* a restored install cannot read stored user API keys.
+            5. Tinfoil note: calling inference.tinfoil.sh directly gets TLS but no enclave attestation (accepted for this version).
+            6. If an MCP server is missing in the UI, check the api app logs for "librechat-boot" lines.
+            7. MCP change procedure - Windmill/Superset: edit the *_MCP_URL or *_MCP_TOKEN env on the api app and redeploy; clearing the URL removes the entry.
+            8. Postgres on: set DATABASE_URI on "-pg-mcp", redeploy, then set PG_MCP_ENABLED=1 on the api app and redeploy. Off: reverse.
+            9. Back up before every upgrade: mongodump + volume tars (commands in https://github.com/digidem/caprover-one-click-apps/blob/master/docs/librechat-integrations.md).
+    variables:
+        - id: $$cap_librechat_version
+          label: LibreChat version
+          defaultValue: 'v0.8.8'
+          validRegex: /^v?[\w.-]{1,32}$/
+        - id: $$cap_mongo_version
+          label: Mongo version
+          defaultValue: '8.0.20'
+          validRegex: /^[\w.-]{1,32}$/
+        - id: $$cap_creds_key
+          label: CREDS_KEY (generated - store it with your backups)
+          defaultValue: $$cap_gen_random_hex(64)
+          validRegex: /^[0-9a-f]{64}$/
+        - id: $$cap_creds_iv
+          label: CREDS_IV (generated - store it with your backups)
+          defaultValue: $$cap_gen_random_hex(32)
+          validRegex: /^[0-9a-f]{32}$/
+        - id: $$cap_jw_secret
+          label: JWT_SECRET (generated)
+          defaultValue: $$cap_gen_random_hex(64)
+          validRegex: /^[0-9a-f]{32,128}$/
+        - id: $$cap_jw_refresh_secret
+          label: JWT_REFRESH_SECRET (generated)
+          defaultValue: $$cap_gen_random_hex(64)
+          validRegex: /^[0-9a-f]{32,128}$/
+        - id: $$cap_mongo_password
+          label: Mongo password (generated - store it with your backups)
+          defaultValue: $$cap_gen_random_hex(32)
+          validRegex: /^[0-9a-f]{32,64}$/
+        - id: $$cap_allow_registration
+          label: Allow self-registration (set false after the first account)
+          defaultValue: 'true'
+          validRegex: '/^(true|false)$/'
+        - id: $$cap_llm_name
+          label: Endpoint display name
+          defaultValue: 'Tinfoil'
+          validRegex: /^[\w .-]{1,32}$/
+        - id: $$cap_llm_base_url
+          label: LLM base URL (OpenAI-compatible)
+          defaultValue: 'https://inference.tinfoil.sh/v1'
+          validRegex: /^https?:\/\/[^'"\\\s]+$/
+        - id: $$cap_llm_api_key
+          label: LLM API key (empty = each user brings their own)
+          defaultValue: ''
+          validRegex: /^[A-Za-z0-9_.~:-]{0,512}$/
+        - id: $$cap_llm_default_model
+          label: Default model
+          defaultValue: 'gpt-oss-120b'
+          validRegex: /^[\w.:\/-]{1,128}$/
+        - id: $$cap_llm_models
+          label: Models offered (comma-separated)
+          defaultValue: 'gpt-oss-120b,kimi-k3,glm-5-3,gemma4-31b,llama3-3-70b'
+          validRegex: /^[\w.:\/-]{1,128}([,][\w.:\/-]{1,128}){0,31}$/
+          description: The first one is the default. For the recommended provider (Tinfoil) these are its documented IDs; for another provider, list its model IDs.
+        - id: $$cap_pg_mcp_enabled
+          label: Enable Postgres MCP (1 = on, 0 = off)
+          defaultValue: '0'
+          validRegex: /^[01]$/
+        - id: $$cap_pg_mcp_database_uri
+          label: Postgres DSN for the Postgres MCP (use a SELECT-only role)
+          defaultValue: ''
+          validRegex: '/^(postgres(ql)?:\/\/[^''"\\\s]+)?$/'
+          description: Leave empty to keep the Postgres MCP off.
+        - id: $$cap_windmill_mcp_url
+          label: Windmill MCP URL (empty = no Windmill)
+          defaultValue: ''
+          validRegex: '/^(https?:\/\/[^''"\\\s]+)?$/'
+          description: Example for the dedicated workspace librechat-agent - http://srv-captain--windmill:8000/api/mcp/w/librechat-agent/mcp
+        - id: $$cap_windmill_mcp_token
+          label: Windmill MCP token (Bearer)
+          defaultValue: ''
+          validRegex: /^[A-Za-z0-9_.~-]{0,256}$/
+        - id: $$cap_superset_mcp_url
+          label: Superset MCP URL (empty = no Superset)
+          defaultValue: ''
+          validRegex: '/^(https?:\/\/[^''"\\\s]+)?$/'
+          description: Example - http://srv-captain--superset-mcp:5008/mcp (the process whose MCP_DEV_USERNAME sets your chosen role).
+        - id: $$cap_superset_mcp_token
+          label: Superset MCP token (Bearer JWT)
+          defaultValue: ''
+          validRegex: /^[A-Za-z0-9_.~=-]{0,4096}$/

@@ -1,0 +1,26 @@
+captainVersion: 4
+
+services:
+    $$cap_appname:
+        image: alpine:$$cap_tag
+        command: ['sh', '-c', 'echo "SPIKE 0=$0 1=$1 2=$2 env=$SPIKE_VAR"; echo SPIKE_TAG_CHECK; exec sleep 86400', 'MARK', 'a b']
+        environment:
+            SPIKE_VAR: 'hello'
+        caproverExtra:
+            notExposeAsWebApp: 'true'
+
+caproverOneClickApp:
+    instructions:
+        start: |-
+            Throwaway spike for LibreChat spike 6.3. Delete after the test.
+        end: |-
+            Check the app logs for the SPIKE line.
+    displayName: LibreChat spike 6.3
+    isOfficial: false
+    description: Throwaway spike, delete after test.
+    documentation: https://github.com/digidem/caprover-one-click-apps
+    variables:
+        - id: '$$cap_tag'
+          label: Alpine tag
+          defaultValue: '3.20'
+          validRegex: '/^[\w.-]{1,32}$/'
