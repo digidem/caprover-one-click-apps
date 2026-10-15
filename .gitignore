@@ -13,3 +13,6 @@ test/superset-e2e/certs/
 
 # agent scratch/cache, not deliverable
 graft/
+
+# python bytecode from the superset test scripts
+scripts/__pycache__/
