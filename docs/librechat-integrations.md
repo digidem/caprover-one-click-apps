@@ -24,7 +24,7 @@ Config (superset_config.py) block:
 MCP_AUTH_ENABLED = True
 MCP_JWT_ALGORITHM = "HS256"
 MCP_JWT_SECRET = os.environ["MCP_JWT_SECRET"]
-MCP_DEV_USERNAME = "librechat-agent"   # the Superset user whose permissions apply
+MCP_DEV_USERNAME = "svc-chat-mcp"      # the Superset user whose permissions apply
 MCP_REQUIRED_SCOPES = "mcp:read"
 MCP_JWT_ISSUER = "superset"
 MCP_JWT_AUDIENCE = "superset"
@@ -52,7 +52,7 @@ Mint a token (any scope string is accepted by the JWT layer; scopes do not gate
 individual tools — see below):
 
 ```bash
-MCP_JWT_SECRET=... python3 scripts/superset_mint_mcp_token.py --sub librechat-agent --scopes 'mcp:read' --days 30
+MCP_JWT_SECRET=... python3 scripts/superset_mint_mcp_token.py --sub svc-chat-mcp --scopes 'mcp:read' --days 30
 --days 30 (short-lived) or --days 365 (spike 6.4: accepted)
 ```
 
@@ -93,6 +93,8 @@ someone else — which is intended behaviour, and is why the legacy orphan datas
 
 ### 1.2 Agent role
 
+The role below is written as the generic `MCP_DashboardAgent`; in production the
+account is `svc-chat-mcp` with role `chat-mcp`, and both names work identically.
 A custom role is required. Default Gamma can write Dashboards/Charts but not
 Datasets; default Alpha has broad data-source rights. Neither default non-admin
 role holds `can_execute_sql_query` on SQLLab.
@@ -271,7 +273,7 @@ comparison could not be made reliably anyway.
 
 ```bash
 export SUPERSET_URL=https://superset.example.com
-export SUPERSET_USERNAME=librechat-agent
+export SUPERSET_USERNAME=svc-chat-mcp
 export SUPERSET_PASSWORD=<the agent account password>
 
 # inspect before editing (shows owners, position_json, native filters)
@@ -552,10 +554,10 @@ which claims are source-derived and which are empirically confirmed.
 - **The role grants work as documented.** The agent account listed its dataset
   and only the database it was granted; it created a chart (`create_virtual_dataset`
   and `generate_chart` with `save_chart: true`) and a dashboard whose `created_by`
-  is the agent, and the DB rows confirm `librechat-agent` is in `dashboard_user`
+  is the agent, and the DB rows confirm the acting user is in `dashboard_user`
   and `slice_user` for those objects, with `dashboard_slices` holding the link.
 - **Denials are explicit.** `execute_sql` failed with
-  `Permission denied: can_execute_sql_query on SQLLab for user librechat-agent`,
+  `Permission denied: can_execute_sql_query on SQLLab for user svc-chat-mcp`,
   and `save_sql_query` with `can_write on SavedQuery ...`. Neither permission is
   granted by the role, and neither tool exists in a form the role can use.
 - **Tool visibility is not authorisation.** The restricted tools are still found

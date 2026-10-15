@@ -41,7 +41,7 @@ The status column is the point: what was verified, by whom, and against what.
 | P2 | `flask-caching==2.3.0` + `fastmcp==3.1.0` installed | Boot log; a missing `flask-caching` makes `superset init` fail outright | **live, unchecked** |
 | P3 | `superset mcp run` reachable behind **https**, and the JWT gate refuses bad tokens | `curl -i https://<host>/mcp` → must be `401`, **not** `404`. Then POST a token signed with the wrong key, and an expired one: both must be `401`. | **verified 2026-10-15** (see §6.1) |
 | P4 | An `MCP_DEV_USERNAME` service per role exists | one process, one `MCP_DEV_USERNAME`; a single process cannot serve two identities | **live, unchecked** |
-| P5 | Agent account exists, non-Admin, holds `MCP_DashboardAgent` | `User List` shows the role | **live, unchecked** |
+| P5 | Agent account exists, non-Admin, holds the intended role — in production `svc-chat-mcp` / `chat-mcp` | `User List` shows the role, and it is **not** Admin | **live, unchecked** |
 | P6 | Role carries **only** the 10 permissions in guide §1.2 | `Security` → `List Roles` → the role | **live, unchecked** |
 | P7 | `datasource_access` + `database_access` granted per guide §1.2 | `Datasets` tab on the role | **live, unchecked** |
 | P8 | `MCP_JWT_SECRET` shared with the MCP process **only** | never in the api app env; the api app only holds the minted token | **live, unchecked** |
@@ -103,11 +103,13 @@ the image healthcheck. Those need Superset and CapRover access.
    must return `401`, not `404`. A 404 means the process is down and chat's
    Superset tools are already dead.
 2. **What does the agent account actually hold?** `Security → List Roles →
-   MCP_DashboardAgent`, then its permissions. It must be exactly the ten in
+   chat-mcp`, then its permissions. It must be exactly the ten in
    guide §1.2. Anything extra — `can_delete`, `can_write` on Database, any
    `all_datasource_access` — is drift and should be removed.
-3. **Is the agent account non-Admin?** `User List → librechat-agent`. If that one
-   field says Admin, every other control in this document is void.
+3. **Is the agent account non-Admin?** In production the account is
+   **`svc-chat-mcp`** (role `chat-mcp`). `User List → svc-chat-mcp`. If that one
+   field says Admin, every other control in this document is void. `librechat-agent`
+   is a placeholder from the guide; go by what `User List` actually shows.
 4. **What has it created?** `Dashboards` and `Charts` where the owner is the
    agent. This is the inventory nobody has. Compare against what the chat users
    expected it to do — duplicated charts and orphan virtual datasets are the
@@ -139,13 +141,13 @@ a rebuild, a second identity, or version drift found in §2.5
 5. Mint the bearer token:
    ```bash
    MCP_JWT_SECRET=<shared secret> python3 scripts/superset_mint_mcp_token.py \
-     --sub librechat-agent --iss <issuer> --aud superset \
+     --sub <the acting user, e.g. svc-chat-mcp> --iss <issuer> --aud superset \
      --scopes 'mcp:read' --days 90
    ```
    Remember `--scopes` is **not enforced** (§6.6): it does not restrict anything.
 6. Start one process per role, **and override the healthcheck**:
    ```bash
-   MCP_DEV_USERNAME=librechat-agent MCP_JWT_SECRET=<secret> \
+   MCP_DEV_USERNAME=svc-chat-mcp MCP_JWT_SECRET=<secret> \
      superset mcp run --host 0.0.0.0 --port 5008
    ```
    A single process cannot serve two identities in 6.1.0 — `MCP_DEV_USERNAME`
@@ -160,7 +162,7 @@ HTTPS gap**, so it is not optional or deferrable:
 
 ```bash
 export SUPERSET_URL=https://superset.example.com \
-       SUPERSET_USERNAME=librechat-agent SUPERSET_PASSWORD=<password>
+       SUPERSET_USERNAME=svc-chat-mcp SUPERSET_PASSWORD=<password>
 
 # read path
 ./scripts/superset_dashboard_ctl.py show dashboard 5
