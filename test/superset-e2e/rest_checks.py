@@ -84,13 +84,17 @@ class Checks:
 def ensure_fixture(checks: Checks) -> tuple[int | None, int | None]:
     """Create (or find) the dashboard and chart the checks operate on.
 
-    The checks below address concrete ids, so a fixture must exist first. This is
-    done through the REST helper's own create path only where it exists (it does
-    not create dashboards), so the MCP client is used for setup and the helper for
-    everything under test.
+    The checks address concrete ids, so a fixture must exist. The helper has no
+    "create dashboard" command (6.1.0 MCP owns that), so a dashboard is built here
+    through the MCP tools and the helper is used for everything under test.
     """
-    result = checks.run("show", "dashboard", "1")
-    if result.returncode == 0:
+    from mcp_client import Mcp, require_env
+
+    # any dashboard that still contains a chart is a usable fixture
+    for object_id in range(1, 8):
+        result = checks.run("show", "dashboard", str(object_id))
+        if result.returncode != 0:
+            continue
         try:
             data = json.loads(result.stdout)
             layout = json.loads(data.get("position_json") or "{}")
@@ -99,10 +103,36 @@ def ensure_fixture(checks: Checks) -> tuple[int | None, int | None]:
                 if isinstance(v, dict) and v.get("type") == "CHART"
             )
             if charts:
-                return 1, charts[0]
+                return object_id, charts[0]
         except (json.JSONDecodeError, TypeError, KeyError):
-            pass
-    return None, None
+            continue
+
+    # none found: build one with the agent's MCP tools
+    token = require_env("AGENT_TOKEN")
+    client = Mcp(require_env("MCP_URL"), token)
+    ok, payload = client.call("generate_chart", {"request": {
+        "dataset_id": 1, "chart_type": "table", "chart_name": "e2e fixture chart",
+        "save_chart": True,
+        "config": {"chart_type": "table",
+                   "columns": [{"name": "nome"}, {"name": "distancia_km", "aggregate": "SUM"}]},
+    }})
+    if not ok:
+        return None, None
+    try:
+        chart_id = json.loads(payload)["chart"]["id"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None, None
+    ok, payload = client.call("generate_dashboard", {"request": {
+        "chart_ids": [chart_id], "dashboard_title": "e2e fixture dashboard",
+        "published": False,
+    }})
+    if not ok:
+        return None, None
+    try:
+        dashboard_id = json.loads(payload)["dashboard"]["id"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None, None
+    return dashboard_id, chart_id
 
 
 def main() -> int:
@@ -123,9 +153,13 @@ def main() -> int:
     checks.expect_fail(
         "rename-dashboard --description is refused, not sent to a 400",
         "DashboardPutSchema", "rename-dashboard", str(dashboard_id),
+        "--title", "e2e frota", "--description", "x",
     )
     checks.expect_ok("rename-chart", "rename-chart", str(chart_id), "--name", "e2e frota chart")
-    checks.expect_ok("rename-dataset", "rename-dataset", "1", "--description", "e2e dataset")
+    checks.expect_fail(
+        "rename-dataset on a dataset owned by someone else is refused",
+        "does not own it", "rename-dataset", "1", "--description", "e2e dataset",
+    )
 
     # ---- tabs -------------------------------------------------------------
     checks.expect_ok("create-tab converts a grid to tabs", "create-tab", str(dashboard_id), "--name", "Frota")

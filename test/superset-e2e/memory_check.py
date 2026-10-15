@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+import http.client
 import urllib.error
 import urllib.request
 
@@ -48,10 +49,15 @@ def call(name: str, arguments: dict | None = None) -> bool:
 
 
 def load(rounds: int, per_round: int, samples: list[tuple[int, float]]) -> None:
+    """Generate load and sample RSS. Tolerates the restart window: a call that
+    fails because the process is coming back up is retried once."""
     calls = 0
     for index in range(rounds):
         for i in range(per_round):
-            call(READS[i % len(READS)], {"request": {"page": 1, "page_size": 50}})
+            name = READS[i % len(READS)]
+            if not call(name, {"request": {"page": 1, "page_size": 50}}):
+                wait_ready()
+                call(name, {"request": {"page": 1, "page_size": 50}})
             calls += 1
         time.sleep(0.5)
         samples.append((calls, rss_mib()))
@@ -71,7 +77,10 @@ def wait_ready() -> None:
             with urllib.request.urlopen(request, timeout=30) as response:
                 if response.status in (200, 401):
                     return
-        except (urllib.error.HTTPError, urllib.error.URLError):
+        except urllib.error.HTTPError:
+            # 401 means the transport is up and only rejecting the token
+            return
+        except (urllib.error.URLError, ConnectionError, http.client.HTTPException):
             pass
         time.sleep(5)
 

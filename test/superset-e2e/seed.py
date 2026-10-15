@@ -110,7 +110,16 @@ with app.app_context():
     # --- a database and a table for the agent to work with ------------------
     database = session.query(Database).filter_by(database_name="examples").first()
     if database is None:
-        database = Database(database_name="examples")
+        # The URI is required: the dbs table rejects a NULL sqlalchemy_uri. It
+        # points at the stack's own Postgres, the same database Superset uses for
+        # metadata - fine for a throwaway fixture.
+        database = Database(
+            database_name="examples",
+            sqlalchemy_uri=os.environ.get(
+                "EXAMPLES_SQLALCHEMY_URI",
+                "postgresql+psycopg2://superset:superset@db:5432/superset",
+            ),
+        )
         session.add(database)
         session.flush()
 
@@ -153,6 +162,16 @@ with app.app_context():
             catalog=database.get_default_catalog(),
         )
         session.add(dataset)
+        session.flush()
+
+    # fetch_metadata populates the columns; without it the dataset has none and
+    # generate_chart rejects every column reference. Run whenever the columns are
+    # missing, so a fixture from an earlier run is repaired too.
+    if not dataset.columns:
+        try:
+            dataset.fetch_metadata()
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            print(f"warning: fetch_metadata failed: {exc}")
         session.flush()
 
     for role_name in ROLES:
