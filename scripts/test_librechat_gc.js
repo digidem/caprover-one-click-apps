@@ -20,12 +20,31 @@ let fails = 0;
 const ok = (m) => console.log("PASS:", m);
 const bad = (m) => { console.log("FAIL:", m); fails++; };
 
+// Note on ownership: the containers run as the image's own user (root here)
+// because the pinned image writes to /app/api/logs and /app/skills. Anything
+// they leave in a bind-mounted tmpdir is therefore owned by that user, and the
+// host cleanup can hit EACCES on a non-root host. That is a cleanup concern, not
+// a behaviour one: `rmDir` below tolerates it and reports rather than aborting.
 function docker(args, input) {
   return cp.spawnSync("docker", args, { encoding: "utf8", input: input, maxBuffer: 64 * 1024 * 1024 });
 }
 
 function tmpDir(tag) {
   return fs.mkdtempSync(path.join(os.tmpdir(), "gc-test-" + tag + "-"));
+}
+
+// A tmpdir that a container wrote into is removed by the container's exit; the
+// host copy may still hold files owned by the container's uid if --user was not
+// applied. Never let cleanup failure mask a passed check: report it, keep going.
+function rmDir(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch (err) {
+    // a leftover tmpdir is noise, not a failure of the behaviour under test
+    console.log("note: could not remove " + dir + " (" + err.code + ")");
+    return false;
+  }
 }
 
 // Starter count per family, from the H2 sections the seeder parses.
@@ -80,8 +99,8 @@ function validatorChecks() {
   const b = run(bad1);
   if (b.status !== 0 && /GC_PROVISION_DEGRADED/.test(b.stderr)) ok("name mismatch is rejected with GC_PROVISION_DEGRADED");
   else bad("name mismatch was not rejected (status " + b.status + ")");
-  fs.rmSync(good, { recursive: true, force: true });
-  fs.rmSync(bad1, { recursive: true, force: true });
+  rmDir(good);
+  rmDir(bad1);
 }
 
 // ---- C. boot-script flag matrix (no Mongo, fast) ------------------------------
@@ -112,7 +131,7 @@ function runBoot(env) {
     "echo ---SKILLS---; ls /app/skills 2>/dev/null | sort; echo ---END---",
   ].join("\n"));
   const r = docker(args);
-  fs.rmSync(dir, { recursive: true, force: true });
+  rmDir(dir);
   const out = (r.stdout || "") + (r.stderr || "");
   const rc = /^RC=(\d+)$/m.exec(out);
   const skills = /---SKILLS---\n([\s\S]*?)---END---/.exec(out);
@@ -161,7 +180,7 @@ function liveChecks() {
   const cleanup = () => {
     docker(["rm", "-f", name]);
     docker(["network", "rm", net]);
-    fs.rmSync(skills, { recursive: true, force: true });
+    rmDir(skills);
   };
   if (docker(["network", "create", net]).status !== 0) { bad("cannot create docker network"); return; }
   if (docker(["run", "-d", "--name", name, "--network", net, MONGO_IMG]).status !== 0) { bad("cannot start " + MONGO_IMG); cleanup(); return; }
