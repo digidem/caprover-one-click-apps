@@ -1,17 +1,42 @@
 name: Publish One Click Apps
 
+# The registry is a static site: everything under dist/ is copied verbatim, so
+# the site root IS dist. GitHub Pages needs that content committed to a branch,
+# and this workflow does exactly that - from a build job, not from the checked-out
+# source branch.
 on:
     push:
         branches: [master]
+    # allow the docs run to be triggered by hand once done, without waiting for a
+    # new commit on master
+    workflow_dispatch:
+
+# allow this workflow to push to gh-pages
+permissions:
+    contents: write
 
 jobs:
     build:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v1
-            - uses: actions/setup-node@v1
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
               with:
                   node-version: 20
-            - run: npm ci && npm run publish
-              env:
-                  GITHUB_PERSONAL_TOKEN: ${{secrets.GITHUB_PERSONAL_TOKEN}}
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+            - name: Build the registry and run the tests
+              run: |
+                  npm ci
+                  node scripts/validate_apps.js
+                  npx prettier --check "./public/**/*.(json|yml)"
+                  bash scripts/test_librechat_config.sh
+                  python3 scripts/test_superset_dashboard_ctl.py
+            - name: Build the static site
+              run: npm run build
+            - name: Publish dist/ to gh-pages
+              uses: peaceiris/actions-gh-pages@v4
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_dir: ./dist
