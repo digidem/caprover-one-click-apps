@@ -179,7 +179,7 @@ caproverOneClickApp:
           label: Superset MCP URL (empty = no Superset)
           defaultValue: ''
           validRegex: '/^(https?:\/\/[^''"\\\s]+)?$/'
-          description: Example - http://srv-captain--superset-mcp:5008/mcp. The process's MCP_DEV_USERNAME fixes the acting Superset user, so one MCP process per role. Superset must be exactly 6.1.0 (see the docs link in the instructions).
+          description: Example - https://superset-mcp.javari.guardianconnector.net/mcp (the public URL of the MCP process; http://srv-captain--<name> also works only for apps on this same CapRover). The process's MCP_DEV_USERNAME fixes the acting Superset user, so one MCP process per role. Superset must be exactly 6.1.0 (see the docs link in the instructions).
         - id: $$cap_superset_mcp_token
           label: Superset MCP token (Bearer JWT)
           defaultValue: ''

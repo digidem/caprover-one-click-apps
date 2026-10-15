@@ -247,7 +247,16 @@ into LibreChat configuration.
 Start `superset mcp run --host 0.0.0.0` and document `MCP_DEV_USERNAME` per
 process. Superset 6.1.0 ships no systemd unit; document a container or systemd
 unit per role process on the Superset host.
-MCP endpoint: `http://<superset-host>:5008/mcp`
+MCP endpoint: `https://<superset-host>/mcp` — the port is whatever `--port`
+selected, and `5008` is only the conventional one.
+
+**Healthcheck trap (verified against the 6.1.0 image family).** The official
+image ships `/app/docker/docker-healthcheck.sh`, which runs
+`curl -f "http://localhost:${SUPERSET_PORT}/health"`. If you override the
+container command to `superset mcp run --port 5008`, nothing answers `/health`
+on 5008, so the check fails and Docker kills and restarts the task roughly every
+100 seconds — which looks like a crash loop or a flaky MCP, not a healthcheck.
+Set `Healthcheck: NONE` in the service override for an MCP-only process.
 
 ### 1.11 REST helper for the actions MCP 6.1.0 cannot reach
 
@@ -552,10 +561,17 @@ which claims are source-derived and which are empirically confirmed.
 - **Tool visibility is not authorisation.** The restricted tools are still found
   by `search_tools` and only fail when called, confirming that a visible tool is
   not an authorised one.
-- **Ownership is enforced on the REST write path too.** The agent could not
-  rename or delete a dataset owned by `admin`: `DashboardPutSchema` / the command
-  layer returned 403 with
-  `the agent account does not own it`. Only the agent's own objects were writable.
+- **Ownership is enforced on the REST write path too — but note what was
+  observed.** The agent could not rename or delete a dataset owned by `admin`,
+  and the call was refused. The refusal text was the *helper's* message
+  (`the agent account does not own it`, `scripts/superset_dashboard_ctl.py`),
+  because the helper checks ownership locally before sending the request — it
+  never uses that check as an authorisation decision, `raise_for_ownership` in
+  Superset is the authority. So the claim "Superset itself returned 403" was not
+  proven by that observation. It remains **unverified** that a raw REST call with
+  no local pre-check is refused by Superset's own `raise_for_ownership`; prove it
+  with a bare `curl` as the agent account if it matters. Also, the line cites
+  `DashboardPutSchema` for a *dataset* operation, which is the wrong schema.
 
 ### 8.2 The REST helper, exercised end to end
 
@@ -614,14 +630,24 @@ extrapolate the absolute numbers.
 ### 8.4 What was NOT verified
 
 - Production, and any instance with real data volume, users or row-level security.
-- **HTTPS is now covered as of 2026-10-15:** `test/superset-e2e/tls_check.sh`
+- **The public token gate.** The harness ran entirely on loopback, so nothing
+  tested the internet-facing JWT check. What a reader can check without
+  credentials: `curl -i https://<mcp-host>/mcp` must answer `401`, and a POST
+  with a wrong-key token and with an expired token must both be `401` too. That
+  was confirmed against the live endpoint on 2026-10-15, but only from outside.
+- **Superset's own `raise_for_ownership` on a raw REST write.** The refusal
+  observed in 8.1 came from the helper's local pre-check, not from Superset. See
+  the corrected bullet in 8.1.
+- **HTTPS is covered locally, not against a public issuer:** `tls_check.sh`
   puts nginx in front of the stack terminating a self-signed cert, and the full
   REST helper suite runs against `https://localhost:18443` - 24/24, with the
   login handshake, the `X-CSRFToken` + `Secure` cookie path and the `Referer`
-  check each asserted as a real call. The helper verifies the certificate chain
-  (it refuses a self-signed cert unless its CA is trusted), which is the correct
-  production behaviour. What remains unverified is a **publicly-trusted** issuer
-  and a real edge proxy.
+  check each asserted as a real call. The helper verifies the certificate chain,
+  which is the correct production behaviour. What remains unverified is a
+  **publicly-trusted** issuer and a **real edge proxy** - which is the exact path
+  production takes.
+- **Memory under real metadata volume.** Section 8.3 measured a small instance;
+  a wide one warms more, so re-measure rather than extrapolate the numbers.
 - RLS (`row_level_security` filters) and the multi-issuer `MCP_USER_RESOLVER`
   path (absent in 6.1.0 anyway).
 - Concurrency beyond what the probe produced: no simultaneous multi-client load
