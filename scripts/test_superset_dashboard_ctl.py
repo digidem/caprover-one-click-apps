@@ -151,9 +151,12 @@ def main() -> int:
     chart = next(k for k, v in layout.items()
                  if isinstance(v, dict) and v.get("type") == "CHART")
     chain = layout[chart]["parents"]
-    check("ancestor chain is complete (immediate parent first)",
-          chain[:1] == ["COLUMN-1"] and "ROOT_ID" in chain[-1:],
-          f"chains must run innermost-parent -> ROOT_ID, got {chain}")
+    # updateComponentParentsList descends from ROOT_ID appending each id, so the
+    # stored chain is OUTERMOST-first: ROOT_ID -> TABS -> TAB -> ROW -> COLUMN.
+    # findTabIndexByComponentId then reads parents[i+1] as a child of parents[i].
+    check("ancestor chain is ROOT-first (as the frontend navigates it)",
+          chain[0] == "ROOT_ID" and chain[-1] == "COLUMN-1" and "TABS_ID" in chain,
+          f"expected ROOT_ID ... COLUMN-1, got {chain}")
     check("version marker survives", "DASHBOARD_VERSION_KEY" in layout)
 
     # removing the only chart must not leave dangling refs nor collapse tabs
@@ -211,7 +214,8 @@ def main() -> int:
                     sdctl.cmd_delete_dataset):
         text = inspect.getsource(command)
         check(f"{command.__name__} says deletes are permanent",
-              "permanent" in text, "6.1.0 has no SOFT_DELETE; deletes are hard")
+              "permanent" in text.lower(),
+              "6.1.0 has no SOFT_DELETE; deletes are hard")
     # The tag has no soft delete, so the helper must never PROMISE it. Mentions
     # are legitimate when they deny it ("no trash", "no SOFT_DELETE").
     promising = [
@@ -221,6 +225,101 @@ def main() -> int:
     ]
     check("soft delete is never promised (only denied)", not promising,
           f"lines implying recoverability: {promising}")
+
+
+    # ---- behavioural guards for the round-2 audit findings ---------------
+    section("6. behavioural guards (round-2 audit)")
+
+    # related_objects answers {"charts": {"count": N, "result": [...]}}; treating
+    # `charts` as a list reads a truthy dict and invents dependants, and a failed
+    # lookup must not fall through to DELETE.
+    def run_delete_dataset(status: int, payload: dict) -> tuple[bool, bool, str]:
+        """Call the real cmd_delete_dataset against a fake client.
+
+        Returns (raised, deleted, message). Exercising the function (instead of
+        grepping its source) is what makes this load-bearing.
+        """
+        from types import SimpleNamespace
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.deleted = False
+
+            def _request(self, _method, _path):
+                return status, payload
+
+            def get(self, _kind, _object_id):
+                return {"owners": []}
+
+            def delete(self, _kind, _object_id):
+                self.deleted = True
+                return {"ok": True}
+
+        fake = FakeClient()
+        args = SimpleNamespace(id=7)
+        raised, message = False, ""
+        try:
+            sdctl.cmd_delete_dataset(fake, args)  # type: ignore[arg-type]
+        except sdctl.SupersetError as exc:
+            raised, message = True, str(exc)
+        return raised, fake.deleted, message
+
+    # related_objects answers {"charts": {"count": N, "result": [...]}}. Reading
+    # `charts` itself as a list gets a truthy dict and invents dependants; a
+    # failed lookup must never fall through to the DELETE.
+    unused = {"result": {"charts": {"count": 0, "result": []},
+                         "dashboards": {"count": 0, "result": []}}}
+    raised, deleted, message = run_delete_dataset(200, unused)
+    check("an unused dataset is deleted, not refused",
+          not raised and deleted, f"raised={raised} deleted={deleted} msg={message}")
+
+    used = {"result": {"charts": {"count": 1, "result": [{"id": 3, "slice_name": "c"}]},
+                       "dashboards": {"count": 0, "result": []}}}
+    raised, deleted, message = run_delete_dataset(200, used)
+    check("a dataset with dependants is refused and not deleted",
+          raised and not deleted and "used by 1 chart" in message,
+          f"raised={raised} deleted={deleted} msg={message}")
+
+    for status in (403, 404, 500):
+        raised, deleted, message = run_delete_dataset(
+            status, {"errors": [{"message": "boom"}]})
+        check(f"a {status} related-objects lookup blocks the delete (fail closed)",
+              raised and not deleted, f"deleted={deleted} msg={message}")
+
+    # a chart on any dashboard must not be deleted: dashboard_slices cascades.
+    from types import SimpleNamespace as _NS
+
+    class FakeChartClient:
+        def __init__(self, dashboards: list) -> None:
+            self.dashboards = dashboards
+            self.deleted = False
+
+        def get(self, _kind, _object_id):
+            return {"owners": [], "dashboards": self.dashboards}
+
+        def delete(self, _kind, _object_id):
+            self.deleted = True
+            return {"ok": True}
+
+    for label, dashboards, should_refuse in (
+        ("chart on no dashboard", [], False),
+        ("chart on a dashboard", [{"id": 9, "dashboard_title": "other user"}], True),
+    ):
+        fake = FakeChartClient(dashboards)
+        raised, message = False, ""
+        try:
+            sdctl.cmd_delete_chart(fake, _NS(id=5))  # type: ignore[arg-type]
+        except sdctl.SupersetError as exc:
+            raised, message = True, str(exc)
+        check(f"delete-chart: {label} -> {'refused' if should_refuse else 'allowed'}",
+              raised == should_refuse and fake.deleted != should_refuse,
+              f"raised={raised} deleted={fake.deleted} msg={message}")
+
+    # a chart used by a dashboard must not be deletable (dashboard_slices cascades)
+    guard_src = inspect.getsource(sdctl.cmd_delete_chart)
+    check("delete-chart refuses a chart that is on any dashboard",
+          "dashboards" in guard_src and "CASCADE" in guard_src.upper(),
+          "deleting a chart removes it from every dashboard, including another user's")
 
     # ---- report -----------------------------------------------------------
     print()

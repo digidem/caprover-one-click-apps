@@ -344,36 +344,38 @@ def _find_tab(layout: dict, name_or_id: str) -> str | None:
 def _rebuild_parents(layout: dict) -> dict:
     """Recompute each component's `parents` as the full ancestor chain.
 
-    Superset stores the whole path, innermost parent first
-    (ROOT_ID -> GRID_ID -> ROW -> COLUMN -> CHART becomes
-    ["COLUMN-x", "ROW-x", "GRID_ID", "ROOT_ID"]), and the frontend consumes that
-    chain for tab navigation and filter scopes
-    (superset-frontend updateComponentParentsList). Recording only the immediate
-    parent leaves the chain truncated, so it is rebuilt by walking upwards.
+    Order matters and is OUTERMOST-FIRST. The frontend's
+    `updateComponentParentsList` starts a path at ROOT_ID and appends each
+    component id as it descends, so `ROOT > TABS > TAB > ROW` gives
+    `ROW.parents = ["ROOT_ID", "TABS_ID", "TAB-x"]`. `findTabIndexByComponentId`
+    then walks that list treating `parents[i+1]` as a *child* of `parents[i]`, so
+    reversing the order breaks tab navigation.
+
+    A component has exactly one parent, so the chain is the walk upwards from the
+    immediate parent to ROOT_ID, reversed to ROOT-first.
     """
     parent_of: dict[str, str | None] = {}
     for key, widget in _widgets(layout).items():
         for child in widget.get("children") or []:
             if child in layout:
-                parent_of[child] = key            # a component has one parent
+                parent_of[child] = key
 
     root = ROOT_ID_KEY if ROOT_ID_KEY in layout else next(iter(_widgets(layout)), None)
 
     def chain_of(component_id: str, seen: set[str]) -> list[str]:
+        """Immediate-parent -> ... -> ROOT_ID, walked upwards."""
         chain: list[str] = []
         current = parent_of.get(component_id)
         while current is not None and current not in seen:
             seen.add(current)
             chain.append(current)
             current = parent_of.get(current)
+        chain.reverse()          # ROOT-first, as the frontend expects
         return chain
 
     for key in list(_widgets(layout)):
         widget = layout[key]
-        if key == root:
-            widget["parents"] = []
-            continue
-        widget["parents"] = chain_of(key, {key})
+        widget["parents"] = [] if key == root else chain_of(key, {key})
     return layout
 
 
@@ -529,11 +531,25 @@ def _attach_chart(layout: dict, parent_id: str, chart_id: int, chart_key: str | 
     When `chart_key` is given the EXISTING component is reused, so its id, size
     and any other meta survive the move. Creating a new component instead would
     silently reset width/height and could orphan the old component.
+
+    If the key already exists it must actually hold THIS chart: reusing a
+    component that point at a different chartId would silently attach the wrong
+    chart, and the layout's chart set would not match the request.
     """
     row_id = _new_row_id(layout)
     column_id = _new_column_id(layout)
     chart_key = chart_key or f"CHART-{chart_id}"
-    if chart_key not in layout:
+    existing = layout.get(chart_key)
+    if existing is not None:
+        held = (existing.get("meta") or {}).get("chartId")
+        try:
+            same = int(held) == int(chart_id)
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            # Collision-free fallback key; never silently retarget the component.
+            chart_key = f"CHART-{chart_id}-{_new_row_id(layout).lower()}"
+    else:
         layout[chart_key] = {
             "children": [],
             "id": chart_key,
@@ -605,7 +621,8 @@ def _metadata_payload(existing_metadata: dict, layout: dict) -> dict:
 
 
 def _apply_layout(client: Client, dashboard_id: int, layout: dict, what: str,
-                  existing_metadata: dict | None = None) -> dict:
+                  existing_metadata: dict | None = None,
+                  expected: set[int] | None = None) -> dict:
     """Write the layout through json_metadata.positions so slices stay in sync.
 
     DashboardDAO.set_dash_metadata rebuilds dashboard.slices from the chartIds in
@@ -613,8 +630,9 @@ def _apply_layout(client: Client, dashboard_id: int, layout: dict, what: str,
     position_json is included as a JSON *string*, which is what the REST schema
     declares; it is what a client would see on a subsequent GET.
     """
+    if expected is None:
+        raise SupersetError("internal error: no expected chart set for this layout write")
     layout = _rebuild_parents(layout)
-    expected = _chart_ids(layout)
     payload = {
         "json_metadata": json.dumps(_metadata_payload(existing_metadata or {}, layout)),
         "position_json": json.dumps(layout),
@@ -625,30 +643,100 @@ def _apply_layout(client: Client, dashboard_id: int, layout: dict, what: str,
 
 
 def _verify(client: Client, dashboard_id: int, expected: set[int], what: str) -> None:
-    """Re-read the dashboard and confirm the write actually took effect.
+    """Re-read the dashboard and confirm the write did exactly what was asked.
 
-    Three things must hold, or the dashboard may be inconsistent and the caller
-    must not retry blindly:
-      * every chart we intended is reachable in the stored layout;
+    `expected` is the chart set the caller declared BEFORE transforming anything,
+    so this cannot be satisfied by a transformation that silently lost a subtree.
+
+    Checked, and any failure refuses to report success:
+      * the stored layout holds exactly `expected` (no extra, none missing);
+      * every CHART component is reachable from ROOT_ID (no orphans);
       * no child reference points at a missing component;
+      * each component has exactly one parent, and its chain is ROOT-first;
       * the layout still carries its version marker.
-    Chart membership in `dashboard.slices` is checked by Superset's command layer
-    (it raises on an inaccessible chart); the stored layout is what we can verify.
     """
     after = client.get("dashboard", dashboard_id)
     layout = _load_layout(after)
+
     if _chart_ids(layout) != expected:
         raise SupersetError(
-            f"{what} applied but reachable charts did not match (expected "
-            f"{sorted(expected)}, got {sorted(_chart_ids(layout))}); the dashboard "
-            "may be inconsistent - inspect it in the Superset UI before retrying"
+            f"{what} applied but the stored charts did not match the request "
+            f"(expected {sorted(expected)}, got {sorted(_chart_ids(layout))}); the "
+            "dashboard may be inconsistent - inspect it in the Superset UI before "
+            "retrying"
         )
+
     dangling = _dangling(layout)
     if dangling:
         raise SupersetError(
             f"{what} left dangling component references {dangling}; the dashboard "
             "may be inconsistent - inspect it in the Superset UI before retrying"
         )
+
+    unreachable = _orphaned(layout)
+    if unreachable:
+        raise SupersetError(
+            f"{what} left components unreachable from ROOT_ID: {unreachable}; the "
+            "dashboard may be inconsistent - inspect it in the Superset UI before "
+            "retrying"
+        )
+
+    bad_parents = _bad_parent_chains(layout)
+    if bad_parents:
+        raise SupersetError(
+            f"{what} produced unusable ancestor chains for {bad_parents}; tab "
+            "navigation reads these paths, so the dashboard may behave incorrectly "
+            "- inspect it in the Superset UI before retrying"
+        )
+
+    if "DASHBOARD_VERSION_KEY" not in layout:
+        raise SupersetError(
+            f"{what} dropped the layout version marker; the dashboard may not "
+            "render correctly - inspect it in the Superset UI before retrying"
+        )
+
+
+def _orphaned(layout: dict) -> list[str]:
+    """Components not reachable from ROOT_ID via the children edges."""
+    widgets = _widgets(layout)
+    root = ROOT_ID_KEY if ROOT_ID_KEY in widgets else None
+    if root is None:
+        return []
+    seen: set[str] = set()
+    frontier = [root]
+    while frontier:
+        current = frontier.pop()
+        if current in seen or current not in widgets:
+            continue
+        seen.add(current)
+        frontier.extend(widgets[current].get("children") or [])
+    return sorted(k for k in widgets if k not in seen and k != "DASHBOARD_VERSION_KEY")
+
+
+def _bad_parent_chains(layout: dict) -> list[str]:
+    """Components whose `parents` list is not a valid ROOT-first path.
+
+    A valid chain starts at ROOT_ID and each following entry is an actual child of
+    the previous one - that is what findTabIndexByComponentId walks.
+    """
+    widgets = _widgets(layout)
+    root = ROOT_ID_KEY if ROOT_ID_KEY in widgets else None
+    broken: list[str] = []
+    for key, widget in widgets.items():
+        if key == root:
+            continue
+        parents = widget.get("parents")
+        if not isinstance(parents, list) or not parents:
+            broken.append(f"{key}(no parents)")
+            continue
+        if root is not None and parents[0] != root:
+            broken.append(f"{key}(does not start at ROOT_ID)")
+            continue
+        for parent_id, child_id in zip(parents, parents[1:] + [key]):
+            if child_id not in (widgets.get(parent_id, {}).get("children") or []):
+                broken.append(f"{key}({child_id} is not a child of {parent_id})")
+                break
+    return broken
 
 
 def _chart_ids(layout: dict) -> set[int]:
@@ -775,6 +863,7 @@ def cmd_create_tab(client: Client, args: argparse.Namespace) -> int:
         "type": TAB,
     }
     layout[tabs_id]["children"] = list(layout[tabs_id].get("children") or []) + [tab_id]
+    expected = _chart_ids(layout)          # computed BEFORE the transform
     for chart_id in args.charts:
         if chart_id in _charts(layout):
             raise SupersetError(f"chart {chart_id} is already on this dashboard")
@@ -783,8 +872,11 @@ def cmd_create_tab(client: Client, args: argparse.Namespace) -> int:
         # CHART component that fails when the dashboard is opened.
         chart = client.get("chart", chart_id)
         _report_ownership("chart", chart_id, chart)
+        expected.add(int(chart_id))
+    for chart_id in args.charts:
         _attach_chart(layout, tab_id, chart_id)
-    _apply_layout(client, args.id, layout, f"tab '{args.name}'", _metadata_of(result))
+    _apply_layout(client, args.id, layout, f"tab '{args.name}'", _metadata_of(result),
+                  expected)
     print(f"OK dashboard {args.id}: tab '{args.name}' created"
           + (f" with charts {args.charts}" if args.charts else ""))
     return 0
@@ -821,7 +913,8 @@ def cmd_move_chart(client: Client, args: argparse.Namespace) -> int:
                 + (", ".join(name or tab_id for tab_id, name in _all_tabs(layout)) or "none")
             )
     _attach_chart(layout, target, args.chart_id, chart_key=chart_key)
-    _apply_layout(client, args.id, layout, f"chart {args.chart_id} move", _metadata_of(result))
+    _apply_layout(client, args.id, layout, f"chart {args.chart_id} move",
+                  _metadata_of(result), expected=_chart_ids(layout))
     print(f"OK dashboard {args.id}: chart {args.chart_id} placed in "
           f"'{args.tab or 'the top-level grid'}'")
     return 0
@@ -889,8 +982,10 @@ def cmd_add_chart(client: Client, args: argparse.Namespace) -> int:
                 f"tab '{args.tab}' not found on dashboard {args.id}; available: "
                 + (", ".join(n or i for i, n in _all_tabs(layout)) or "none")
             )
+    expected = _chart_ids(layout) | {int(args.chart_id)}
     _attach_chart(layout, target, args.chart_id)
-    _apply_layout(client, args.id, layout, f"chart {args.chart_id} added", _metadata_of(result))
+    _apply_layout(client, args.id, layout, f"chart {args.chart_id} added",
+                  _metadata_of(result), expected)
     print(f"OK dashboard {args.id}: chart {args.chart_id} added"
           + (f" to tab '{args.tab}'" if args.tab else ""))
     return 0
@@ -911,16 +1006,46 @@ def cmd_remove_chart(client: Client, args: argparse.Namespace) -> int:
             layout[key]["children"] = [c for c in children if c != chart_key]
     _drop_empty_containers(layout)
     # positions rebuilds dashboard.slices, so the chart is genuinely detached
-    _apply_layout(client, args.id, layout, f"chart {args.chart_id} removed", _metadata_of(result))
+    expected = _chart_ids(layout)
+    _apply_layout(client, args.id, layout, f"chart {args.chart_id} removed",
+                  _metadata_of(result), expected)
     print(f"OK dashboard {args.id}: chart {args.chart_id} detached (the chart itself is kept)")
     return 0
 
 
 def cmd_delete_chart(client: Client, args: argparse.Namespace) -> int:
+    """Delete an owned chart, after checking what would lose it.
+
+    Superset 6.1.0's DeleteChartCommand validates existence, attached
+    reports/alerts and the *chart's* ownership (`commands/chart/delete.py`). It
+    does not look at the dashboards containing the chart — and
+    `dashboard_slices.slice_id` is `ON DELETE CASCADE`
+    (`models/dashboard.py`), so deleting the chart silently removes it from every
+    dashboard, including one owned by someone else. That would damage another
+    user's object, which the design forbids.
+
+    The chart GET exposes the containing dashboards (`charts/api.py`
+    `dashboards.id` / `dashboards.dashboard_title`), so a shared chart is detected
+    and refused instead.
+    """
     result = client.get("chart", args.id)
     _report_ownership("chart", args.id, result)
+
+    dashboards = [
+        d for d in (result.get("dashboards") or []) if isinstance(d, dict)
+    ]
+    if dashboards:
+        names = [d.get("dashboard_title", d.get("id")) for d in dashboards]
+        raise SupersetError(
+            f"chart {args.id} is used by {len(dashboards)} dashboard(s): "
+            f"{', '.join(str(n) for n in names[:10])}. Deleting it would remove it "
+            "from those dashboards (dashboard_slices cascades on chart delete), "
+            "including any owned by another user. Detach it from every dashboard "
+            "first (remove-chart), then retry."
+        )
+
     out = client.delete("chart", args.id)
-    _confirm(f"chart {args.id} deleted (permanent in 6.1.0: no trash)", out)
+    _confirm(f"chart {args.id} deleted (PERMANENT in 6.1.0: no trash)", out)
     return 0
 
 
@@ -941,26 +1066,47 @@ def cmd_delete_dataset(client: Client, args: argparse.Namespace) -> int:
     (`commands/dataset/delete.py`), so an owned dataset still referenced by a
     chart — possibly another user's — can be removed, breaking that chart. The
     related-objects endpoint reports dependants, so refuse instead.
+
+    That endpoint answers
+        {"charts": {"count": N, "result": [...]}, "dashboards": {...}}
+    (`datasets/api.py` related_objects), so both the count and the list must be
+    read from the nested object — treating `charts` itself as the list would read
+    a truthy dict and report bogus dependants. If the lookup does not succeed we
+    refuse rather than proceed blind.
     """
     result = client.get("dataset", args.id)
     _report_ownership("dataset", args.id, result)
+
     status, body = client._request("GET", f"/api/v1/dataset/{args.id}/related_objects")
-    if 200 <= status < 300 and isinstance(body, dict):
-        related = body.get("result", body) or {}
-        charts = related.get("charts") if isinstance(related, dict) else None
-        dashboards = related.get("dashboards") if isinstance(related, dict) else None
-        if charts:
-            names = [c.get("slice_name", c.get("id")) for c in charts if isinstance(c, dict)]
-            raise SupersetError(
-                f"dataset {args.id} is used by {len(charts)} chart(s): "
-                f"{', '.join(str(n) for n in names[:10])}. Deleting it would break "
-                "them. Remove those charts from the dataset first, or ask an Admin."
-            )
-        if dashboards:
-            raise SupersetError(
-                f"dataset {args.id} backs {len(dashboards)} dashboard(s); deleting it "
-                "would empty them. Remove those dashboards' charts first, or ask an Admin."
-            )
+    if not (200 <= status < 300) or not isinstance(body, dict):
+        raise SupersetError(
+            f"cannot confirm what depends on dataset {args.id} "
+            f"(related-objects lookup returned HTTP {status}); refusing to delete "
+            "rather than risk breaking a chart or dashboard. Retry, or ask an Admin."
+        )
+    related = body.get("result", body) or {}
+
+    def dependants(key: str) -> list:
+        """Parse {"count": N, "result": [...]}; tolerate a bare list too."""
+        entry = related.get(key) if isinstance(related, dict) else None
+        if isinstance(entry, dict):
+            return entry.get("result") or []
+        return entry if isinstance(entry, list) else []
+
+    charts = dependants("charts")
+    dashboards = dependants("dashboards")
+    if charts:
+        names = [c.get("slice_name", c.get("id")) for c in charts if isinstance(c, dict)]
+        raise SupersetError(
+            f"dataset {args.id} is used by {len(charts)} chart(s): "
+            f"{', '.join(str(n) for n in names[:10])}. Deleting it would break "
+            "them. Remove those charts from the dataset first, or ask an Admin."
+        )
+    if dashboards:
+        raise SupersetError(
+            f"dataset {args.id} backs {len(dashboards)} dashboard(s); deleting it "
+            "would empty them. Remove those dashboards' charts first, or ask an Admin."
+        )
     out = client.delete("dataset", args.id)
     _confirm(f"dataset {args.id} deleted (permanent in 6.1.0: no trash)", out)
     return 0
@@ -1019,7 +1165,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tab", help="tab name or id; omit for the top level")
     p.set_defaults(func=cmd_move_chart)
 
-    p = sub.add_parser("add-chart", help="add an owned chart to a dashboard, into a tab when given")
+    p = sub.add_parser("add-chart", help="add a chart to a dashboard, into a tab when given")
     p.add_argument("id", type=int)
     p.add_argument("chart_id", type=int)
     p.add_argument("--tab", help="tab name or id; omit for the top level")

@@ -1,0 +1,103 @@
+# Local e2e stack for the Superset 6.1.0 MCP integration.
+# Throwaway: fixed project name + bound ports so teardown.sh can remove all of
+# it (containers, named volume, image) without touching anything else on the host.
+name: ss-mcp-e2e
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+      POSTGRES_DB: superset
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    # no persistence: this stack is disposable
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  superset:
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      APP_NAME: SupersetE2E
+      SECRET_KEY: e2e-not-a-real-secret-key-000000
+      DATABASE_URI: postgresql+psycopg2://superset:superset@db:5432/superset
+      REDIS_URL: redis://redis:6379/0
+      CACHE_KEY_PREFIX: e2e_
+      SUPERSET_PORT: "8088"
+      MCP_JWT_SECRET: e2e-shared-secret-not-real-000000
+    command: >
+      bash -c "
+      superset db upgrade &&
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088 --with-threads"
+    ports:
+      - "127.0.0.1:18088:8088"
+
+  # 6.1.0 fixes the acting user per PROCESS (MCP_DEV_USERNAME), so each identity
+  # needs its own process. This is the agent account from
+  # docs/librechat-integrations.md section 1.2.
+  superset-mcp:
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      superset:
+        condition: service_started
+    environment:
+      APP_NAME: SupersetE2E
+      SECRET_KEY: e2e-not-a-real-secret-key-000000
+      DATABASE_URI: postgresql+psycopg2://superset:superset@db:5432/superset
+      REDIS_URL: redis://redis:6379/0
+      CACHE_KEY_PREFIX: e2e_
+      SUPERSET_PORT: "8088"
+      MCP_JWT_SECRET: e2e-shared-secret-not-real-000000
+      MCP_DEV_USERNAME: librechat-agent
+    command: ["superset", "mcp", "run", "--host", "0.0.0.0", "--port", "5008"]
+    ports:
+      - "127.0.0.1:15008:5008"
+
+  # A second identity with write permissions, so the cross-role ownership checks
+  # can prove the boundary from both sides. Not the read-only role: the point is
+  # a *different non-admin* user, which is what raise_for_ownership is about.
+  superset-mcp-writer:
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      superset:
+        condition: service_started
+    environment:
+      APP_NAME: SupersetE2E
+      SECRET_KEY: e2e-not-a-real-secret-key-000000
+      DATABASE_URI: postgresql+psycopg2://superset:superset@db:5432/superset
+      REDIS_URL: redis://redis:6379/0
+      CACHE_KEY_PREFIX: e2e_
+      SUPERSET_PORT: "8088"
+      MCP_JWT_SECRET: e2e-shared-secret-not-real-000000
+      MCP_DEV_USERNAME: e2e-writer
+    command: ["superset", "mcp", "run", "--host", "0.0.0.0", "--port", "5009"]
+    ports:
+      - "127.0.0.1:15009:5009"
+
+volumes:
+  pgdata:

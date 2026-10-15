@@ -302,9 +302,10 @@ instead of a server 400:
 A dashboard is a GRID *or* a TABS at top level. `create-tab` converts an
 existing grid into a tab, carrying its charts over, so nothing is orphaned.
 
-Exit codes: 0 ok, 1 refused or failed. A 403 means the agent does not own the
-object; a 404 means the id is wrong. `remove-chart` is the operation REST cannot
-do safely on its own — see 1.11.1.
+Exit codes: 0 ok, 1 refused or failed. A 403 normally means the object is not
+owned by the agent, but Flask-AppBuilder can also return 403 for a missing
+permission, so read the error text. A 404 means the id is wrong. `remove-chart` is
+the operation REST cannot do safely on its own — see 1.11.1.
 
 #### 1.11.1 CSRF, and why `remove-chart` is special
 
@@ -348,7 +349,10 @@ The one stock REST path that synchronizes both is `json_metadata.positions`:
 a declared field of `DashboardJSONMetadataSchema` (`dashboards/schemas.py`), so it
 passes validation (marshmallow 3 rejects unknown keys elsewhere).
 `remove-chart` uses exactly that: it reads the layout, drops the component,
-writes `positions` back, and verifies the resulting `dashboard.slices`.
+writes `positions` back, and verifies the result by re-reading the dashboard. The
+verification checks the stored layout — expected charts present, no orphans,
+no dangling references, valid ROOT-first ancestor chains — not `dashboard.slices`
+directly, because Superset does not return that set on a dashboard GET.
 
 ## 2. Windmill (dedicated workspace, D11)
 
@@ -555,19 +559,23 @@ which claims are source-derived and which are empirically confirmed.
 
 ### 8.2 The REST helper, exercised end to end
 
-Every command in 1.11 was run against the live instance with the agent account:
 `show`, `rename-dashboard --title`, `rename-chart`, `rename-dataset`, `create-tab`,
-`move-chart --tab`, `add-chart`, `set-filters`, `remove-chart`, `delete-chart`.
-Observed, not assumed:
+`move-chart --tab`, `add-chart`, `set-filters`, `remove-chart` and `delete-chart`
+were each run against the live instance with the agent account. Two commands were
+**not** exercised live in that run: `delete-dashboard`, and `delete-dataset` — the
+dataset available to the agent had dependants, so the dependency guard refused it,
+which is the protected path but not a completed delete. Both are now covered by
+the behavioural tests in `scripts/test_superset_dashboard_ctl.py` and by
+`test/superset-e2e`. Observed, not assumed:
 
 - `create-tab` on a **grid** dashboard converts it to tabs and **carries the
   existing charts over**; the result is `ROOT > TABS > TAB > ROW > COLUMN > CHART`
   with no dangling child ids and no lost charts.
 - `remove-chart` detaches a chart while keeping it: the chart is gone from the
   layout and the dashboard's chart count drops, and the chart itself still exists.
-- `rename-dashboard --description` is **refused locally** before any request,
-  because `DashboardPutSchema` has no `description` field; a server round trip
-  would only produce a 400. Dataset and chart descriptions do work.
+- `rename-dashboard --description` is **refused** because `DashboardPutSchema`
+  has no `description` field; letting it reach the server would only produce a
+  400. Dataset and chart descriptions do work.
 - `move-chart` with no `--tab` on an already-tabbed dashboard is refused, because
   ROOT may hold exactly one child (a GRID or a TABS).
 - Existing `json_metadata` survives every layout write: native filters, colour
@@ -612,3 +620,31 @@ extrapolate the absolute numbers.
   path (absent in 6.1.0 anyway).
 - Concurrency beyond what the probe produced: no simultaneous multi-client load
   test was run, so no claim is made about throughput or pool sizing.
+
+### 8.5 Known residual risks (decided, not defects)
+
+These are accepted consequences of the 6.1.0 access model, recorded so they are
+policy rather than surprise. All three are enforced or bounded by Superset's own
+checks; none requires Admin.
+
+1. **Adding a chart the agent does not own to a dashboard it does own creates a
+   sharing relationship.** `UpdateDashboardCommand` checks *dashboard* ownership,
+   not chart ownership, so `add-chart`/`create-tab --charts` can place a chart
+   belonging to someone else onto the agent's dashboard. That does not edit the
+   chart's definition, does not re-home it from its owner's dashboards, and does
+   not grant the agent edit rights on the chart. But any holder of a dashboard
+   role on that dashboard can see the chart's data through it
+   (`security/manager.py` dashboard `raise_for_access`). **Accepted**: the agent
+   is operated by a human who controls which dashboards it owns and who holds
+   roles on them. If that ever changes, restrict `add-chart` to charts whose owner
+   is the agent — the data is available in the chart GET response.
+2. **Deleting a shared chart is refused rather than attempted.** The agent can
+   delete a chart it owns, but only when that chart is on no dashboard at all,
+   because `dashboard_slices.slice_id` is `ON DELETE CASCADE` and would remove it
+   from other users' dashboards. The helper detects the containing dashboards
+   from the chart GET and refuses. To delete such a chart, detach it from every
+   dashboard first (`remove-chart` on each).
+3. **A dataset delete is refused when anything depends on it, and refused again
+   when its dependants cannot be determined.** `DeleteDatasetCommand` validates
+   existence and ownership only, so without this guard an owned dataset referenced
+   by another user's chart could be removed and break that chart.
