@@ -1,29 +1,30 @@
 {
-  "name": "awana-caprover-one-click-apps",
-  "version": "1.0.0",
-  "description": "One Click App Repository for CapRover by Awana",
-  "scripts": {
-    "formatter": "prettier --check \"./public/**/*.(json|yml)\"",
-    "formatter-write": "prettier --write \"./public/**/*.(json|yml)\"",
-    "build": "rm -rf ./dist/ && mkdir -p dist && node ./scripts/build_one_click_apps.js && node ./scripts/build_one_click_apps_from_v4.js",
-    "validate_apps": "node ./scripts/validate_apps.js",
-    "publish": "npm run build && ./scripts/publish-from-actions.sh",
-    "test_librechat": "node scripts/test_librechat_config.js"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/digidem/caprover-one-click-apps.git"
-  },
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/digidem/caprover-one-click-apps/issues"
-  },
-  "homepage": "https://github.com/digidem/caprover-one-click-apps",
-  "dependencies": {
-    "fs-extra": "^9.0.1",
-    "gh-pages": "^3.1.0",
-    "prettier": "^2.0.5",
-    "yaml": "^1.10.0"
-  }
+    "name": "awana-caprover-one-click-apps",
+    "version": "1.0.0",
+    "description": "One Click App Repository for CapRover by Awana",
+    "scripts": {
+        "formatter": "prettier --check \"./public/**/*.(json|yml)\"",
+        "formatter-write": "prettier --write \"./public/**/*.(json|yml)\"",
+        "build": "rm -rf ./dist/ && mkdir -p dist && node ./scripts/build_one_click_apps.js && node ./scripts/build_one_click_apps_from_v4.js",
+        "validate_apps": "node ./scripts/validate_apps.js",
+        "publish": "npm run build && ./scripts/publish-from-actions.sh",
+        "test_librechat": "node scripts/test_librechat_config.js",
+        "test_superset_ctl": "python3 scripts/test_superset_dashboard_ctl.py"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/digidem/caprover-one-click-apps.git"
+    },
+    "author": "",
+    "license": "ISC",
+    "bugs": {
+        "url": "https://github.com/digidem/caprover-one-click-apps/issues"
+    },
+    "homepage": "https://github.com/digidem/caprover-one-click-apps",
+    "dependencies": {
+        "fs-extra": "^9.1.0",
+        "gh-pages": "^3.2.3",
+        "prettier": "^2.8.8",
+        "yaml": "^1.10.3"
+    }
 }

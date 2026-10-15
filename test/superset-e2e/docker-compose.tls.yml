@@ -1,0 +1,23 @@
+# TLS front for the e2e stack.
+#
+# Purpose: scripts/superset_dashboard_ctl.py is normally used over https, and the
+# CSRF/session handshake and the `Referer` check behind HTTPS were never exercised
+# (docs/librechat-integrations.md 8.4). This nginx terminates a self-signed TLS
+# cert and forwards to the plain-HTTP superset container, so the checks talk to
+# exactly the URL shape production uses, with no code change in the helper.
+#
+# It is a faithful stand-in for the production edge in the properties that matter:
+# TLS, a Host header the app sees, and the session cookie passing through.
+name: ss-mcp-e2e
+
+services:
+  tls:
+    image: nginx:mainline-alpine-slim
+    depends_on:
+      - superset
+    volumes:
+      - ./tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/certs:ro
+    ports:
+      - "127.0.0.1:18443:443"
+    command: ["nginx", "-g", "daemon off;"]

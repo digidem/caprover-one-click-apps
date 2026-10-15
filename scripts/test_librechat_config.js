@@ -181,5 +181,8 @@ for (const c of FAIL_CASES) {
 }
 
 fs.rmSync(path.join(ROOT, "scripts", ".test_boot_body.sh"), { force: true });
+
+// ---- 5. GC skills and prompt seeding (task_plan.md test matrix) ---------------
+fails += require("./test_librechat_gc").runAll();
 if (fails > 0) { console.log("FAILED: " + fails + " check(s)"); process.exit(1); }
 console.log("ALL CHECKS PASSED");

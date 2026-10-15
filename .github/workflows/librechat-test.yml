@@ -11,6 +11,12 @@ on:
             - scripts/test_librechat_config.sh
             - scripts/sync_librechat_boot.js
             - scripts/superset_mint_mcp_token.py
+            - scripts/superset_dashboard_ctl.py
+            - scripts/test_superset_dashboard_ctl.py
+            - scripts/gc_skills_bundle.sh
+            - scripts/gc/seed/gc_seed.cjs
+            - scripts/test_librechat_gc.js
+            - skills/gc/**
             - .github/workflows/librechat-test.yml
     pull_request:
         branches:
@@ -22,6 +28,12 @@ on:
             - scripts/test_librechat_config.sh
             - scripts/sync_librechat_boot.js
             - scripts/superset_mint_mcp_token.py
+            - scripts/superset_dashboard_ctl.py
+            - scripts/test_superset_dashboard_ctl.py
+            - scripts/gc_skills_bundle.sh
+            - scripts/gc/seed/gc_seed.cjs
+            - scripts/test_librechat_gc.js
+            - skills/gc/**
             - .github/workflows/librechat-test.yml
 
 jobs:
@@ -33,3 +45,8 @@ jobs:
               with:
                   node-version: 20
             - run: npm ci && node scripts/validate_apps.js && npx prettier --check "./public/**/*.(json|yml)" && bash scripts/test_librechat_config.sh
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+            - name: Superset REST helper contract tests
+              run: python3 scripts/test_superset_dashboard_ctl.py

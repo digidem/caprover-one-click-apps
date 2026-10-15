@@ -3,3 +3,16 @@ dist/*
 node_modules
 .DS_Store
 .idea/
+
+# generated at run time by test/superset-e2e/tls_check.sh (never commit the key)
+test/superset-e2e/certs/
+
+/progress.md
+/findings.md
+/task_plan.md
+
+# agent scratch/cache, not deliverable
+graft/
+
+# python bytecode from the superset test scripts
+scripts/__pycache__/
