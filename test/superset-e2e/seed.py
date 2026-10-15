@@ -130,8 +130,13 @@ with app.app_context():
     # --- the example table (physical, so no virtual-dataset step is needed) --
     from sqlalchemy import text
 
+    # Postgres has no per-database schema: the fixture table lives in `public`,
+    # which is also the connection's search_path. `get_default_catalog()` returns
+    # the *database* name for Postgres, which is not a schema - using it here
+    # produced "schema \"superset\" does not exist", and a fixture with no table
+    # leaves the dataset with no columns.
     session.execute(text(
-        "CREATE TABLE IF NOT EXISTS e2e_frota ("
+        'CREATE TABLE IF NOT EXISTS "public"."e2e_frota" ('
         " id serial primary key,"
         " nome text,"
         " regiao text,"
@@ -139,12 +144,17 @@ with app.app_context():
         ")"
     ))
     session.execute(text(
-        "INSERT INTO e2e_frota (nome, regiao, distancia_km) VALUES "
+        'INSERT INTO "public"."e2e_frota" (nome, regiao, distancia_km) VALUES '
         "('alfa','norte',12.5),('beta','sul',31.0),('gama','norte',7.25),"
         "('delta','leste',44.75),('epsilon','sul',19.5) "
         "ON CONFLICT DO NOTHING"
     ))
     session.flush()
+    # Commit the fixture table now. `fetch_metadata` inspects through the
+    # Database's own engine, so the table must be committed before the inspect:
+    # an uncommitted DDL is invisible to that connection and the fetch raises
+    # NoSuchTableError even though the seed session can see it.
+    session.commit()
 
     # --- register the dataset and grant per-dataset access ------------------
     from superset.connectors.sqla.models import SqlaTable
@@ -155,24 +165,49 @@ with app.app_context():
         ).first()
     )
     if dataset is None:
+        # Both None on purpose: on Postgres the connection's search_path already
+        # resolves to `public`, and setting either explicitly makes
+        # fetch_metadata raise NoSuchTableError (it inspects with a different
+        # prefix than the one that is quoted here). Verified against 6.1.0:
+        # (catalog=None, schema=None) populates the columns,
+        # (catalog=None, schema='public') raises NoSuchTableError.
         dataset = SqlaTable(
             table_name="e2e_frota",
             database_id=database.id,
-            schema="public",
-            catalog=database.get_default_catalog(),
+            schema=None,
+            catalog=None,
         )
         session.add(dataset)
+        session.flush()
+    else:
+        # an earlier run may have registered the fixture table with an explicit
+        # schema/catalog that cannot be inspected; align it with the form above
+        dataset.schema = None
+        dataset.catalog = None
         session.flush()
 
     # fetch_metadata populates the columns; without it the dataset has none and
     # generate_chart rejects every column reference. Run whenever the columns are
-    # missing, so a fixture from an earlier run is repaired too.
+    # missing, so a fixture from an earlier run is repaired too. A failure here is
+    # a seeding failure, not a warning: nothing downstream can work without it.
     if not dataset.columns:
-        try:
-            dataset.fetch_metadata()
-        except Exception as exc:  # pragma: no cover - diagnostics only
-            print(f"warning: fetch_metadata failed: {exc}")
-        session.flush()
+        dataset.fetch_metadata()
+        session.commit()
+        # `columns` is a lazy-loaded relationship: a flush between fetch_metadata
+        # and here resets the pending attribute events (SAWarning
+        # "set_committed_value"), so re-read rather than trusting the in-memory
+        # collection - it can look empty after the rows were actually written.
+        session.refresh(dataset)
+        dataset = (
+            session.query(SqlaTable).filter_by(
+                database_id=database.id, table_name="e2e_frota"
+            ).first()
+        )
+        if not dataset.columns:
+            raise SystemExit(
+                "fetch_metadata reported success but e2e_frota still has no "
+                "columns; inspect the connection"
+            )
 
     for role_name in ROLES:
         role = security_manager.find_role(role_name)

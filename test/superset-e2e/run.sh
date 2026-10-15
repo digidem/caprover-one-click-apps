@@ -52,10 +52,19 @@ note "1/7 build the e2e image"
 
 note "1b/7 start from a clean slate"
 # A leftover pgdata from an earlier run breaks `superset db upgrade` (duplicate
-# key on ab_permission_id_seq), so never reuse one.
+# key on ab_permission_id_seq), so never reuse one. The removal must happen with
+# nothing from the previous stack still running, so that is dealt with first:
+# `docker volume rm` fails while a container holds the volume, and that failure
+# must not be swallowed.
+for container in $(docker ps -aq -f name='ss-mcp-e2e' || true); do
+  docker rm -f "$container" >/dev/null 2>&1 || true
+done
 if docker volume ls --format '{{.Name}}' | grep -q '^ss-mcp-e2e_pgdata'; then
-  echo "  removing a stale pgdata volume from a previous run"
-  docker volume rm ss-mcp-e2e_pgdata >/dev/null 2>&1 || true
+  if docker volume rm ss-mcp-e2e_pgdata >/dev/null 2>&1; then
+    echo "  removed a stale pgdata volume from a previous run"
+  else
+    fail "cannot remove the stale ss-mcp-e2e_pgdata volume; something still holds it (see docker ps -a)"
+  fi
 fi
 
 note "2/7 start Postgres, Redis, Superset web and the two MCP processes"
@@ -93,8 +102,32 @@ else
 fi
 
 note "6/7 seed the identities, roles, data access and example dataset"
-"${COMPOSE[@]}" cp seed.py superset:/tmp/seed.py >/dev/null 2>&1 || true
+# The copy is part of the step, not best-effort: a silent cp failure leaves the
+# container running the seed.py shipped in the image build, which can diverge from
+# this checkout (this is exactly how a stale seed was run once).
+"${COMPOSE[@]}" cp seed.py superset:/tmp/seed.py || fail "could not copy seed.py"
 "${COMPOSE[@]}" exec -T superset python /tmp/seed.py || fail "seeding failed"
+
+# The seed claims to be done when the dataset row exists, but generate_chart fails
+# on a dataset with no cached columns. Assert the state the checks depend on, so a
+# silent metadata miss is a seeding failure and not a mystery in step 7.
+# The app banner goes to stdout, so take the LAST line of output, not all of it.
+columns=$("${COMPOSE[@]}" exec -T superset python - <<'PY' 2>/dev/null | tail -1
+from superset import create_app
+from superset.extensions import db
+app = create_app()
+with app.app_context():
+    from superset.connectors.sqla.models import SqlaTable
+    ds = db.session.query(SqlaTable).filter_by(table_name="e2e_frota").first()
+    print(0 if ds is None else len(ds.columns))
+PY
+) || fail "seeded state could not be verified"
+case "$columns" in
+  ''|*[!0-9]*) fail "seeded state could not be read (got: '$columns')" ;;
+esac
+[ "$columns" -ge 4 ] || \
+  fail "seeding incomplete: e2e_frota has $columns cached columns, the checks need at least 4"
+echo "  seeded: e2e_frota has $columns cached columns"
 
 if [ "$KEEP" -eq 1 ]; then
   note "skipping the checks (--keep)"
