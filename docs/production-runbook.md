@@ -83,6 +83,22 @@ Cross-role access was refused in both directions (§8.2).
 
 Do this before anything else. It is read-only and takes minutes.
 
+### What an outsider could check (done 2026-10-15, no credentials needed)
+
+| Check | Result |
+|---|---|
+| `https://superset-mcp.javari.guardianconnector.net/mcp` | answers **401** to a POST with no bearer, to a token signed with the wrong key, and to an expired token. The JWT gate is up, and it fails closed on all three. |
+| `https://chat.javari.guardianconnector.net/` | 200, HSTS on. The api app is healthy. |
+| `/api/config` on chat | `registrationEnabled: false`. The GC-skills precondition in guide §7.4 is already satisfied. |
+| `/api/config` `mcpServers` | **null**, and that is expected — LibreChat does not expose its MCP list there. It is not evidence either way. |
+
+So the edge is sound. What that could **not** show from outside: whether the
+agent account is still non-Admin, whether its role still holds exactly ten
+permissions, what the agent has created, and whether the live process overrides
+the image healthcheck. Those need Superset and CapRover access.
+
+### What still needs the Superset/CapRover console
+
 1. **Is the gate up?** `curl -i https://superset-mcp.javari.guardianconnector.net/mcp`
    must return `401`, not `404`. A 404 means the process is down and chat's
    Superset tools are already dead.
@@ -102,6 +118,10 @@ Do this before anything else. It is read-only and takes minutes.
 6. **Token expiry.** Find the mint date of the live token. If it was minted
    2026-10-13 with `--days 90`, it expires around 2027-01-11. Put that date in a
    calendar now.
+7. **Is the healthcheck overridden?** Check the service override on the
+   `superset-mcp` app for `Healthcheck: NONE`. If it is missing, the container is
+   being killed every ~100s (see P9) — which outside looks like the endpoint
+   flapping, not like a misconfigured healthcheck.
 
 ---
 
