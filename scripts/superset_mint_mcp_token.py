@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # Mint HS256 MCP tokens for the Superset MCP server (spec 6.4, D10).
 # Secret comes from env MCP_JWT_SECRET (required, never printed).
+# Scopes are a global JWT admission requirement only on 6.1.0: MCP_REQUIRED_SCOPES
+# is checked by the verifier, but no per-tool scope enforcement exists, so
+# "mcp:read" does NOT make the token read-only. Authorization is the FAB role of
+# the process's MCP_DEV_USERNAME plus object ownership.
 # Usage:
 #   MCP_JWT_SECRET=... python3 scripts/superset_mint_mcp_token.py \
-#     --sub alpha --iss superset --aud superset --scopes 'mcp:read mcp:write' --days 365
+#     --sub librechat-agent --iss superset --aud superset --scopes 'mcp:read' --days 30
 # Prints the token to stdout and nothing else.
 import argparse
 import base64

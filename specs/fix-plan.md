@@ -64,6 +64,12 @@ Inputs: Opus review (B1, R1–R10, NITs) and Codex review. D1–D6 stay unchange
    - Conf: LOW for branch 2 (Q3).
 
 8. **Superset spike outputs (R5, Codex "identity spike too narrow")**
+   - NOTE (verified later, 2026-10-14): the `MCP_DISABLED_TOOLS` item in (a)
+     was never valid for 6.1.0 — the setting does not exist in that tag and is a
+     silent no-op. Superseded by `specs/librechat-superset.md` and
+     `docs/librechat-integrations.md` §1, which were corrected after a source
+     audit of the `6.1.0` tag. This entry is kept as a historical record of what
+     was asked for, not as current guidance.
    - §: 6.4, 2 (Superset), 4.
    - Change: spike 6.4 must deliver:
      - (a) `specs/librechat-superset.md`: the exact patch pin (≥6.1.0) and a `superset_config.py` snippet: `MCP_AUTH_ENABLED`, `MCP_JWT_ALGORITHM="HS256"`, `MCP_JWT_SECRET`, `MCP_JWT_ISSUER`, `MCP_JWT_AUDIENCE`, `MCP_REQUIRED_SCOPES`, `MCP_DISABLED_TOOLS`, `MCP_RBAC_ENABLED=True`;
