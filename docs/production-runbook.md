@@ -186,16 +186,17 @@ For an unrecoverable CapRover state, restore per §4 of the integrations guide
 | Superset helper | `npm run test_superset_ctl` |
 | Registry + template | `npm run validate_apps && npm run formatter` |
 | Full harness, reproducible | `test/superset-e2e/run.sh` — 24 tools, agent 16/0, cross-role 3/0, helper 24/0, memory bounded |
-| HTTPS path (the §8.4 gap) | `test/superset-e2e/tls_check.sh` |
+| HTTPS path (now covered) | `test/superset-e2e/tls_check.sh` — 24/24 over `https://localhost:18443` |
 
 ---
 
 ## 6. Known limits to state plainly at go/no-go
 
-1. **HTTPS was unverified until the TLS harness existed.** `tls_check.sh` runs
-   the helper through nginx with a self-signed cert; if it passes, the CSRF and
-   `Referer` handshake is proven for the https URL shape. Until it passes, treat
-   3.2 as the only https evidence.
+1. **HTTPS is now covered locally, not against a public issuer.** `tls_check.sh`
+   passes 24/24 through nginx with a self-signed cert, which proves the CSRF and
+   `Referer` handshake for the https URL shape and shows that the helper verifies
+   the certificate chain. Not covered: a publicly-trusted CA and a real edge
+   proxy. Step 3.2 is still the first contact with *your* edge.
 2. **`execute_sql` is denied by design.** The agent cannot run ad-hoc SQL. Any
    requirement for that is a role change, i.e. a new risk decision.
 3. **Descriptions cannot be set over REST** for dashboards. Titles work.

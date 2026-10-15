@@ -614,8 +614,14 @@ extrapolate the absolute numbers.
 ### 8.4 What was NOT verified
 
 - Production, and any instance with real data volume, users or row-level security.
-- HTTPS: the local instance ran plain HTTP, so the `Referer`/`WTF_CSRF_SSL_STRICT`
-  path and TLS termination are unverified.
+- **HTTPS is now covered as of 2026-10-15:** `test/superset-e2e/tls_check.sh`
+  puts nginx in front of the stack terminating a self-signed cert, and the full
+  REST helper suite runs against `https://localhost:18443` - 24/24, with the
+  login handshake, the `X-CSRFToken` + `Secure` cookie path and the `Referer`
+  check each asserted as a real call. The helper verifies the certificate chain
+  (it refuses a self-signed cert unless its CA is trusted), which is the correct
+  production behaviour. What remains unverified is a **publicly-trusted** issuer
+  and a real edge proxy.
 - RLS (`row_level_security` filters) and the multi-issuer `MCP_USER_RESOLVER`
   path (absent in 6.1.0 anyway).
 - Concurrency beyond what the probe produced: no simultaneous multi-client load

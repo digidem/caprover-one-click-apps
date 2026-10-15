@@ -3,3 +3,6 @@ dist/*
 node_modules
 .DS_Store
 .idea/
+
+# generated at run time by test/superset-e2e/tls_check.sh (never commit the key)
+test/superset-e2e/certs/
