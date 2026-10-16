@@ -27,6 +27,10 @@ USER root
 RUN cp /app/pythonpath/superset_config.py /app/pythonpath/superset_config.base.py \
  && chmod 644 /app/pythonpath/superset_config.py
 COPY superset_config.py /app/pythonpath/superset_config.py
+
+# Same chart-ownership patch as the production image (javari-ops/superset-mcp-Dockerfile).
+RUN /app/.venv/bin/python -c 'import pathlib;p=pathlib.Path("/app/superset/mcp_service/dashboard/tool/add_chart_to_existing_dashboard.py");s=p.read_text();old="            validation = check_chart_data_access(new_chart)\n";new="            from superset import security_manager as _sm\n            from superset.exceptions import SupersetSecurityException as _SSE\n            try:\n                _sm.raise_for_ownership(new_chart)\n            except _SSE:\n                return AddChartToDashboardResponse(dashboard=None, dashboard_url=None, position=None, error=\"Chart \" + str(request.chart_id) + \" is not owned by the service user\")\n"+old;assert s.count(old)==1,"patch anchor not found";p.write_text(s.replace(old,new,1))' \
+ && /app/.venv/bin/python -c "import sys;compile(open(sys.argv[1]).read(), sys.argv[1], 'exec')" /app/superset/mcp_service/dashboard/tool/add_chart_to_existing_dashboard.py
 USER superset
 
 ENV SUPERSET_CONFIG_PATH=/app/pythonpath/superset_config.py

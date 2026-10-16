@@ -16,3 +16,6 @@ graft/
 
 # python bytecode from the superset test scripts
 scripts/__pycache__/
+
+# python bytecode from the e2e harness scripts
+test/superset-e2e/__pycache__/
