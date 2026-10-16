@@ -76,7 +76,7 @@ Every mutation path we depend on enforces it:
 
 | Path | Check |
 |---|---|
-| MCP `add_chart_to_existing_dashboard` | `raise_for_ownership(dashboard)` — `dashboard/tool/add_chart_to_existing_dashboard.py:340` |
+| MCP `add_chart_to_existing_dashboard` | `raise_for_ownership(dashboard)` — `dashboard/tool/add_chart_to_existing_dashboard.py:340`; production also patches in `raise_for_ownership(chart)` (see §1.8) |
 | MCP `update_chart` | `UpdateChartCommand` → `raise_for_ownership` — `commands/chart/update.py:119` |
 | MCP `generate_dashboard` / `generate_chart` | creates; owner defaults to the acting user (`commands/base.py:48`) |
 | MCP `create_virtual_dataset` | `CreateDatasetCommand` → `raise_for_access(database, sql, catalog, schema)` — `commands/dataset/create.py:90` |
@@ -234,6 +234,12 @@ Class-level RBAC is **not** the whole check. `generate_chart` also calls
 (`mcp_service/auth.py:265`). `execute_sql` and `save_sql_query` additionally
 call `can_access_database`. So `get_chart_data` needs Chart read **and**
 datasource access; `execute_sql` needs SQLLab execute **and** database access.
+
+In production, `add_chart_to_existing_dashboard` also requires **chart
+ownership**: the deployed image patches the tool to run
+`raise_for_ownership(chart)` before `check_chart_data_access`, so a chart the
+acting user does not own is refused ("not owned by the service user") even when
+its dataset is accessible. Verified live 2026-10-16.
 
 ### 1.9 Concurrency: no sequential-call requirement
 
@@ -662,16 +668,20 @@ policy rather than surprise. All three are enforced or bounded by Superset's own
 checks; none requires Admin.
 
 1. **Adding a chart the agent does not own to a dashboard it does own creates a
-   sharing relationship.** `UpdateDashboardCommand` checks *dashboard* ownership,
-   not chart ownership, so `add-chart`/`create-tab --charts` can place a chart
+   sharing relationship.** In stock 6.1.0, `UpdateDashboardCommand` checks
+   *dashboard* ownership, not chart ownership, so an attach can place a chart
    belonging to someone else onto the agent's dashboard. That does not edit the
    chart's definition, does not re-home it from its owner's dashboards, and does
    not grant the agent edit rights on the chart. But any holder of a dashboard
    role on that dashboard can see the chart's data through it
-   (`security/manager.py` dashboard `raise_for_access`). **Accepted**: the agent
-   is operated by a human who controls which dashboards it owns and who holds
-   roles on them. If that ever changes, restrict `add-chart` to charts whose owner
-   is the agent — the data is available in the chart GET response.
+   (`security/manager.py` dashboard `raise_for_access`). **Closed for the MCP
+   tool in production (deployed 2026-10-15)**: the deployed image patches
+   `add_chart_to_existing_dashboard` to run `raise_for_ownership(chart)` before
+   the data check, so a foreign chart is refused with "not owned by the service
+   user" (observed live 2026-10-16). The e2e harness carries the identical patch
+   and asserts the refusal. **Still open for the helper's `add-chart` and
+   `create-tab --charts`**: those are operator-run, so the residual is a policy
+   rule for the operator, not an agent risk.
 2. **Deleting a shared chart is refused rather than attempted.** The agent can
    delete a chart it owns, but only when that chart is on no dashboard at all,
    because `dashboard_slices.slice_id` is `ON DELETE CASCADE` and would remove it

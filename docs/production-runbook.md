@@ -94,8 +94,34 @@ Do this before anything else. It is read-only and takes minutes.
 
 So the edge is sound. What that could **not** show from outside: whether the
 agent account is still non-Admin, whether its role still holds exactly ten
-permissions, what the agent has created, and whether the live process overrides
-the image healthcheck. Those need Superset and CapRover access.
+permissions, what the agent has created, what the live process overrides, and
+whether the deployed image carries the intended patch. Those need Superset and
+CapRover access.
+
+### Deployed state (updated 2026-10-16)
+
+- **`superset-mcp` runs CapRover version 2**: image
+  `communityfirst/superset-mcp:6.1.0-ownercheck-20261015`
+  (`sha256:113dab3978767a91e5c582e2958f56bf26f4b357bb51fa1507f6f875c94fa3ec`),
+  deployed 2026-10-15 by digest via `rastro_caprover.py deploy-image --execute`
+  (build on the laptop, push, deploy by tag — no on-host build).
+  The image is the stock 6.1.0 base plus one patch:
+  `add_chart_to_existing_dashboard` now requires `raise_for_ownership(chart)`
+  before `check_chart_data_access` (Dockerfile: `~/javari-ops/superset-mcp-Dockerfile`;
+  the e2e harness carries the identical patch and asserts the refusal).
+- **Env and override survived the deploy**: nine env vars including
+  `MCP_RBAC_ENABLED=True`, and the service override with `Healthcheck: NONE`,
+  the `superset mcp run` command, and the 1.5 GiB memory limit.
+- **Verified after deploy**: public gate 401 without a token / 200 with chat's
+  token listing 24 tools, sustained over repeated polls; production LibreChat
+  test 2026-10-16 **9/9 PASS**, including the foreign-chart refusal and the
+  foreign-dashboard denial (dashboard 1, "Painel do Univaja").
+  `svc-chat-mcp` roles observed: Gamma + `chat-mcp`, non-Admin.
+- **Image rollback**: CapRover dashboard → version 1
+  (`img-captain-superset-mcp:1`), still in the version list. A definition backup
+  taken before the deploy lives at
+  `~/javari-ops/backups/superset-mcp-def-pre-ownercheck-20261015.json`
+  (mode 600, contains secrets).
 
 ### What still needs the Superset/CapRover console
 
