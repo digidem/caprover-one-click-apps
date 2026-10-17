@@ -19,3 +19,6 @@ scripts/__pycache__/
 
 # python bytecode from the e2e harness scripts
 test/superset-e2e/__pycache__/
+
+# claude runtime lock
+.claude/scheduled_tasks.lock
