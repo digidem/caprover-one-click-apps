@@ -1,6 +1,6 @@
 # Production deployment plan — Superset MCP integration
 
-Target: CapRover app `librechat` from
+Target: CapRover app `chat` from
 `public/v4/apps/librechat.yml` in this repo, published to
 `https://caprover-apps.comapeo.cloud/v4`.
 Scope: the Superset MCP integration (sections 1 and 1.11 of
@@ -39,7 +39,7 @@ The status column is the point: what was verified, by whom, and against what.
 |---|---|---|---|
 | P1 | Superset is exactly `6.1.0` | From the app's **Logs** tab, the boot banner prints the version. `docker exec … pip show` only works on a host with shell access. | **live, unchecked** |
 | P2 | `flask-caching==2.3.0` + `fastmcp==3.1.0` installed | Boot log; a missing `flask-caching` makes `superset init` fail outright | **live, unchecked** |
-| P3 | `superset mcp run` reachable behind **https**, and the JWT gate refuses bad tokens | `curl -i https://<host>/mcp` → must be `401`, **not** `404`. Then POST a token signed with the wrong key, and an expired one: both must be `401`. | **verified 2026-10-15** (see §6.1) |
+| P3 | `superset mcp run` reachable behind **https**, and the JWT gate refuses bad tokens | `curl -i https://<host>/mcp` → must be `401`, **not** `404`. Then POST a token signed with the wrong key, and an expired one: both must be `401`. | **verified 2026-10-15** (see §2.5, step 1) |
 | P4 | An `MCP_DEV_USERNAME` service per role exists | one process, one `MCP_DEV_USERNAME`; a single process cannot serve two identities | **live, unchecked** |
 | P5 | Agent account exists, non-Admin, holds the intended role — in production `svc-chat-mcp` / `chat-mcp` | `User List` shows the role, and it is **not** Admin | **live, unchecked** |
 | P6 | Role carries **only** the 10 permissions in guide §1.2 | `Security` → `List Roles` → the role | **live, unchecked** |
@@ -90,7 +90,7 @@ Do this before anything else. It is read-only and takes minutes.
 | `https://superset-mcp.javari.guardianconnector.net/mcp` | answers **401** to a POST with no bearer, to a token signed with the wrong key, and to an expired token. The JWT gate is up, and it fails closed on all three. |
 | `https://chat.javari.guardianconnector.net/` | 200, HSTS on. The api app is healthy. |
 | `/api/config` on chat | `registrationEnabled: false`. The GC-skills precondition in guide §7.4 is already satisfied. |
-| `/api/config` `mcpServers` | **null**, and that is expected — LibreChat does not expose its MCP list there. It is not evidence either way. |
+| `/api/config` `mcpServers` | `{}` (empty object), and that is expected — LibreChat does not expose its MCP list there. It is not evidence either way. |
 
 So the edge is sound. What that could **not** show from outside: whether the
 agent account is still non-Admin, whether its role still holds exactly ten
@@ -155,8 +155,7 @@ CapRover access.
 
 ## 3. Procedure
 
-### 3.1 Prepare Superset — **already done in production**, so this section is for
-a rebuild, a second identity, or version drift found in §2.5
+### 3.1 Prepare Superset — **already done in production**, so this section is for a rebuild, a second identity, or version drift found in §2.5
 
 1. `pip install "apache-superset[fastmcp]==6.1.0" "flask-caching==2.3.0" "fastmcp==3.1.0"`.
    Without the `flask-caching` pin `superset init` fails.
@@ -170,7 +169,8 @@ a rebuild, a second identity, or version drift found in §2.5
      --sub <the acting user, e.g. svc-chat-mcp> --iss <issuer> --aud superset \
      --scopes 'mcp:read' --days 90
    ```
-   Remember `--scopes` is **not enforced** (§6.6): it does not restrict anything.
+   Production minted with `--sub svc-chat-mcp --days 90` (2026-10-13; expires ~2027-01-11).
+   Remember `--scopes` is **not enforced** (§7 item 6): it does not restrict anything.
 6. Start one process per role, **and override the healthcheck**:
    ```bash
    MCP_DEV_USERNAME=svc-chat-mcp MCP_JWT_SECRET=<secret> \
@@ -207,8 +207,6 @@ If `create-tab` returns a CSRF error, the `X-CSRFToken`/cookie handshake is
 broken behind your edge (proxy stripping `Set-Cookie`, `Referer` host not
 matching). Fix that **before** continuing — it is the most likely production-only
 failure, and it cannot be caught by the local http harness.
-
-### 3.3 Deploy the registry changes
 
 ### 3.3 Publish the template
 
@@ -339,10 +337,10 @@ Pages would serve them from this repo instead. Confirm the content matches
 
 | Step | Evidence that it actually happened |
 |---|---|
-| §2.5 audit, step 1 | `curl -i <mcp>/mcp` → `401` (not `404`), plus wrong-key and expired tokens both `401` — **done 2026-10-15** |
+| §2.5 audit, step 1 | `curl -i <mcp>/mcp` → `401` (not `404`), plus wrong-key and expired tokens both `401` — **done 2026-10-15, re-verified 2026-10-17** |
 | §2.5 audit, steps 2-6 | screenshots of the role, the user, and the inventory of agent-owned objects |
 | §3.2 | the three helper calls, with outputs |
-| §5 registry | `curl …/v4/list` **listing `librechat`**, and `curl …/v4/apps/librechat` → 200 — **not yet true** |
+| §5 registry | `curl …/v4/list` **listing `librechat`**, and `curl …/v4/apps/librechat` → 200 — **not yet true** (re-checked 2026-10-17: still 404) |
 | §3.4 | boot log line, tool count, dashboard list |
 | Every existing case | `npm run test_librechat` (includes the GC matrix) |
 | Superset helper | `npm run test_superset_ctl` |

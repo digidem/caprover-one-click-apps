@@ -4,7 +4,8 @@ Setup for the optional MCP integrations of
 [`public/v4/apps/librechat.yml`](../public/v4/apps/librechat.yml):
 Postgres (read-only), Windmill (dedicated workspace), Superset (pinned exactly
 6.1.0; one process per identity). Commands were tested as written; see
-`specs/spike-*.md` in the repo for the evidence.
+`specs/librechat-superset.md` (and `specs/librechat-mcp.md`) in the repo for
+the evidence.
 
 Every Superset claim below was verified against the `6.1.0` source tag, not the
 "Next" documentation, which describes 7.x.
@@ -15,7 +16,7 @@ Superset 6.1.0 exactly. Install pins (both required — the MCP server does not
 work without them):
 
 ```bash
-uv pip install "apache-superset[fastmcp]==6.1.0" "flask-caching==2.3.0" "fastmcp==3.1.0" PyJWT
+uv pip install "apache-superset[fastmcp]==6.1.0" "flask-caching==2.3.0" "fastmcp==3.1.0" PyJWT  # PyJWT optional here: the repo's mint script is stdlib-only
 ```
 
 Config (superset_config.py) block:
@@ -40,7 +41,7 @@ it** — it is dead code in this tag, and there is no `MCP_USER_RESOLVER` settin
 either. So one process = one identity. This is a property of **our
 configuration** (one `MCP_DEV_USERNAME` per process), not a law of MCP.
 
-### No tool allow/deny list exists in 6.1.0
+**No tool allow/deny list exists in 6.1.0.**
 
 There is **no** config to enable or disable individual MCP tools in 6.1.0 — no
 `MCP_DISABLED_TOOLS`, no equivalent. (It appears in `mcp_config.py` from the
@@ -53,7 +54,7 @@ individual tools — see below):
 
 ```bash
 MCP_JWT_SECRET=... python3 scripts/superset_mint_mcp_token.py --sub svc-chat-mcp --scopes 'mcp:read' --days 30
---days 30 (short-lived) or --days 365 (spike 6.4: accepted)
+# --days 30 (short-lived) or --days 365 (spike 6.4: accepted)
 ```
 
 `MCP_REQUIRED_SCOPES` is a **global JWT admission requirement only**
@@ -454,7 +455,7 @@ Apply it to `<app>`, `<app>-mongodb` and `<app>-pg-mcp` (1.5 GB each here). Stor
 | Windmill/Superset URL or token | Edit env on the api app, redeploy. Clearing the URL removes the entry. |
 | Postgres on | DATABASE_URI on `-pg-mcp`, redeploy, then PG_MCP_ENABLED=1 on api, redeploy. |
 | Postgres off | PG_MCP_ENABLED=0 on api, redeploy, then clear DATABASE_URI on `-pg-mcp`, redeploy. |
-| Token rotation | Mint a new token, edit *_MCP_TOKEN, redeploy. |
+| Token rotation | Mint a new token, edit *_MCP_TOKEN, redeploy. Keeping the URL keeps the entry (it picks up the new header). Clearing only the token while leaving the URL leaves the entry in place but unauthenticated — clear the URL too if the entry should go away. |
 
 ## 7. Guardian Connector skills and prompts (optional, off by default)
 
