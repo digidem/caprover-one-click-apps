@@ -71,7 +71,7 @@ def main() -> int:
     checks = Checks()
 
     agent_dash, _agent_chart = _create_stack(checks.agent, "agent-owned dashboard")
-    writer_dash, _writer_chart = _create_stack(checks.writer, "writer-owned dashboard")
+    writer_dash, writer_chart = _create_stack(checks.writer, "writer-owned dashboard")
 
     checks.check("both identities created their own dashboard",
                  agent_dash is not None and writer_dash is not None,
@@ -97,6 +97,18 @@ def main() -> int:
             ok and ("permission" in payload.lower() or "not own" in payload.lower()),
             payload, 260,
         )
+
+        # The agent may not attach a chart it does not own, even to its own
+        # dashboard. Dataset access alone is not enough (chart-ownership patch).
+        if writer_chart:
+            ok, payload = checks.agent.call("add_chart_to_existing_dashboard", {"request": {
+                "dashboard_id": agent_dash, "chart_id": writer_chart,
+            }})
+            checks.check(
+                "the agent cannot attach the writer's chart to its own dashboard",
+                ok and "not owned by the service user" in payload,
+                payload, 260,
+            )
 
     # The REST helper must land on the same wall: it cannot rename the other
     # user's dataset. Dataset 1 is seeded as the agent's; the writer's own is

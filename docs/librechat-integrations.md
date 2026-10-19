@@ -4,7 +4,8 @@ Setup for the optional MCP integrations of
 [`public/v4/apps/librechat.yml`](../public/v4/apps/librechat.yml):
 Postgres (read-only), Windmill (dedicated workspace), Superset (pinned exactly
 6.1.0; one process per identity). Commands were tested as written; see
-`specs/spike-*.md` in the repo for the evidence.
+`specs/librechat-superset.md` (and `specs/librechat-mcp.md`) in the repo for
+the evidence.
 
 Every Superset claim below was verified against the `6.1.0` source tag, not the
 "Next" documentation, which describes 7.x.
@@ -15,7 +16,7 @@ Superset 6.1.0 exactly. Install pins (both required — the MCP server does not
 work without them):
 
 ```bash
-uv pip install "apache-superset[fastmcp]==6.1.0" "flask-caching==2.3.0" "fastmcp==3.1.0" PyJWT
+uv pip install "apache-superset[fastmcp]==6.1.0" "flask-caching==2.3.0" "fastmcp==3.1.0" PyJWT  # PyJWT optional here: the repo's mint script is stdlib-only
 ```
 
 Config (superset_config.py) block:
@@ -40,7 +41,7 @@ it** — it is dead code in this tag, and there is no `MCP_USER_RESOLVER` settin
 either. So one process = one identity. This is a property of **our
 configuration** (one `MCP_DEV_USERNAME` per process), not a law of MCP.
 
-### No tool allow/deny list exists in 6.1.0
+**No tool allow/deny list exists in 6.1.0.**
 
 There is **no** config to enable or disable individual MCP tools in 6.1.0 — no
 `MCP_DISABLED_TOOLS`, no equivalent. (It appears in `mcp_config.py` from the
@@ -53,7 +54,7 @@ individual tools — see below):
 
 ```bash
 MCP_JWT_SECRET=... python3 scripts/superset_mint_mcp_token.py --sub svc-chat-mcp --scopes 'mcp:read' --days 30
---days 30 (short-lived) or --days 365 (spike 6.4: accepted)
+# --days 30 (short-lived) or --days 365 (spike 6.4: accepted)
 ```
 
 `MCP_REQUIRED_SCOPES` is a **global JWT admission requirement only**
@@ -76,7 +77,7 @@ Every mutation path we depend on enforces it:
 
 | Path | Check |
 |---|---|
-| MCP `add_chart_to_existing_dashboard` | `raise_for_ownership(dashboard)` — `dashboard/tool/add_chart_to_existing_dashboard.py:340` |
+| MCP `add_chart_to_existing_dashboard` | `raise_for_ownership(dashboard)` — `dashboard/tool/add_chart_to_existing_dashboard.py:340`; production also patches in `raise_for_ownership(chart)` (see §1.8) |
 | MCP `update_chart` | `UpdateChartCommand` → `raise_for_ownership` — `commands/chart/update.py:119` |
 | MCP `generate_dashboard` / `generate_chart` | creates; owner defaults to the acting user (`commands/base.py:48`) |
 | MCP `create_virtual_dataset` | `CreateDatasetCommand` → `raise_for_access(database, sql, catalog, schema)` — `commands/dataset/create.py:90` |
@@ -234,6 +235,12 @@ Class-level RBAC is **not** the whole check. `generate_chart` also calls
 (`mcp_service/auth.py:265`). `execute_sql` and `save_sql_query` additionally
 call `can_access_database`. So `get_chart_data` needs Chart read **and**
 datasource access; `execute_sql` needs SQLLab execute **and** database access.
+
+In production, `add_chart_to_existing_dashboard` also requires **chart
+ownership**: the deployed image patches the tool to run
+`raise_for_ownership(chart)` before `check_chart_data_access`, so a chart the
+acting user does not own is refused ("not owned by the service user") even when
+its dataset is accessible. Verified live 2026-10-16.
 
 ### 1.9 Concurrency: no sequential-call requirement
 
@@ -448,7 +455,7 @@ Apply it to `<app>`, `<app>-mongodb` and `<app>-pg-mcp` (1.5 GB each here). Stor
 | Windmill/Superset URL or token | Edit env on the api app, redeploy. Clearing the URL removes the entry. |
 | Postgres on | DATABASE_URI on `-pg-mcp`, redeploy, then PG_MCP_ENABLED=1 on api, redeploy. |
 | Postgres off | PG_MCP_ENABLED=0 on api, redeploy, then clear DATABASE_URI on `-pg-mcp`, redeploy. |
-| Token rotation | Mint a new token, edit *_MCP_TOKEN, redeploy. |
+| Token rotation | Mint a new token, edit *_MCP_TOKEN, redeploy. Keeping the URL keeps the entry (it picks up the new header). Clearing only the token while leaving the URL leaves the entry in place but unauthenticated — clear the URL too if the entry should go away. |
 
 ## 7. Guardian Connector skills and prompts (optional, off by default)
 
@@ -662,16 +669,20 @@ policy rather than surprise. All three are enforced or bounded by Superset's own
 checks; none requires Admin.
 
 1. **Adding a chart the agent does not own to a dashboard it does own creates a
-   sharing relationship.** `UpdateDashboardCommand` checks *dashboard* ownership,
-   not chart ownership, so `add-chart`/`create-tab --charts` can place a chart
+   sharing relationship.** In stock 6.1.0, `UpdateDashboardCommand` checks
+   *dashboard* ownership, not chart ownership, so an attach can place a chart
    belonging to someone else onto the agent's dashboard. That does not edit the
    chart's definition, does not re-home it from its owner's dashboards, and does
    not grant the agent edit rights on the chart. But any holder of a dashboard
    role on that dashboard can see the chart's data through it
-   (`security/manager.py` dashboard `raise_for_access`). **Accepted**: the agent
-   is operated by a human who controls which dashboards it owns and who holds
-   roles on them. If that ever changes, restrict `add-chart` to charts whose owner
-   is the agent — the data is available in the chart GET response.
+   (`security/manager.py` dashboard `raise_for_access`). **Closed for the MCP
+   tool in production (deployed 2026-10-15)**: the deployed image patches
+   `add_chart_to_existing_dashboard` to run `raise_for_ownership(chart)` before
+   the data check, so a foreign chart is refused with "not owned by the service
+   user" (observed live 2026-10-16). The e2e harness carries the identical patch
+   and asserts the refusal. **Still open for the helper's `add-chart` and
+   `create-tab --charts`**: those are operator-run, so the residual is a policy
+   rule for the operator, not an agent risk.
 2. **Deleting a shared chart is refused rather than attempted.** The agent can
    delete a chart it owns, but only when that chart is on no dashboard at all,
    because `dashboard_slices.slice_id` is `ON DELETE CASCADE` and would remove it

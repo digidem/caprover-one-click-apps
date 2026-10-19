@@ -12,7 +12,7 @@ Collect three things from the install before you open the UI.
 
 ## 2. Create the agent
 
-Open LibreChat and go to the agent builder from the sidebar; the label may differ in your version. Create a new agent and fill in the fields as follows. The builder may group or word these fields slightly differently; the label may differ in your version.
+Open LibreChat and go to the agent builder from the sidebar; the label may differ in your version. Create a new agent and fill in the fields as follows. The builder may group or word these fields slightly differently.
 
 | Field | Value |
 | --- | --- |
