@@ -20,9 +20,9 @@ Method: senior (Opus 5.5) plan + adversarial review · junior (deepseek-4.1-flas
 - **Local e2e (isolated scratch copy, local Docker socket, env -i)**: run.sh **ALL CHECKS PASSED** (REST 24/24, memory bounded +2.6 MiB/200 calls, chart+dashboard flows, ownership denial) after one cold-start failure (→ R-19); tls_check **PASSED**.
 - **Local suites**: test_librechat (incl. GC matrix), test_superset_ctl, validate_apps, formatter --check — all PASS.
 
-## Findings (22 rows; zero CRITICAL)
+## Findings (28 rows; zero CRITICAL)
 
-Full table: `/tmp/gc-review/review/findings-table.md`. Top items:
+Full table: `findings.md` in this directory. Process evidence archive: `~/javari-ops/review-2026-10/` (the /tmp paths cited inside are from the live session; the archive is the durable copy). Top items:
 
 | id | sev | one-line | recommendation |
 |---|---|---|---|

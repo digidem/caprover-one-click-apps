@@ -2,6 +2,8 @@
 
 Date 2026-10-17. Layers: REPO / DEPLOYED / LIVE. Severity: CRITICAL/HIGH/MED/LOW/INFO. Every finding carries evidence and a one-line recommendation.
 
+Status note (2026-10-19): R-01..R-08, R-17, R-18 and L-03 were fixed in commit bf8fd11 on this branch; R-14 and the remaining MEDs are tsk-tracked (gc-review-12/15) and user-gated. The e2e ownership-refusal check (4th cross-role check) can skip vacuously when the writer chart is absent (readonly_checks.py:103) — tracked with gc-review-15 test hardening.
+
 ## REPO layer
 
 | id | sev | finding | evidence | recommendation |

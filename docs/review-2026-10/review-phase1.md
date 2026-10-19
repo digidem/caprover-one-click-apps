@@ -88,7 +88,7 @@ Verdict: REPRODUCED (all claims).
 2. **`GC_SKILLS_ENABLED='1'` vs template — resolved as MATCH.** Template variable `$$cap_gc_skills_enabled` default '0', `validRegex ^[01]$` (`public/v4/apps/librechat.yml:187-191`); boot accepts only 0|1 (`:704-709`). Prod '1' is format-valid and a deliberate install-time override (documented optional §3.5/guide §7). The '1' vs 'true' note in expect-verdicts.md closes as no issue.
 3. **`PG_MCP_ENABLED='0'` in prod** — matches template default '0' (:160-163). Postgres MCP off is the designed default; no drift.
 4. **superset MCP via public URL** — template description for `$$cap_superset_mcp_url` (:178-182) gives exactly the public-URL shape as its example (`https://superset-mcp.javari.guardianconnector.net/mcp`); prod usage is per-design, not drift.
-5. **`mcpServers` {} vs runbook :93 "null"** — live `{}` differs from the documented literal `null`. Both mean "not exposed"; cosmetic doc fix. (Finding L-05.)
+5. **`mcpServers` {} vs runbook :93 "null"** — live `{}` differs from the documented literal `null`. Both mean "not exposed"; cosmetic doc fix. (Finding L-03.)
 No junior claim contradicts the DEPLOYED/LIVE evidence.
 
 # D1 component→test coverage map + D3 gap-list confirmation (senior substitution)

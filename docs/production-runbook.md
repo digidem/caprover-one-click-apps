@@ -345,7 +345,7 @@ Pages would serve them from this repo instead. Confirm the content matches
 | Every existing case | `npm run test_librechat` (includes the GC matrix) |
 | Superset helper | `npm run test_superset_ctl` |
 | Registry + template | `npm run validate_apps && npm run formatter` |
-| Full harness, reproducible | `test/superset-e2e/run.sh` — 24 tools, agent 16/0, cross-role 3/0, helper 24/0, memory bounded |
+| Full harness, reproducible | `test/superset-e2e/run.sh` — 24 tools, agent 16/0, cross-role up to 4/0 (4th check conditional on the writer chart existing), helper 24/0, memory bounded |
 | HTTPS path (local only) | `test/superset-e2e/tls_check.sh` — 24/24 over `https://localhost:18443` |
 
 ---
